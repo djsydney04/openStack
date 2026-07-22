@@ -41,6 +41,8 @@ Provider definitions are part of the product contract. Each provider declares
 auth methods, resource mappings, read/import/plan/apply/delete support, state ID
 policy, and secret handling. Vercel, Supabase, Neon, and Railway are registered
 first; Render, Fly, and Netlify can be added behind the same contract.
+See `docs/provider-api-contracts.md` for the docs-backed API surfaces that each
+adapter will call.
 
 Example:
 

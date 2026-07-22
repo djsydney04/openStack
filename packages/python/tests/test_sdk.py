@@ -62,6 +62,15 @@ class StackportSdkTest(unittest.TestCase):
             self.assertIs(railway["secrets"]["stores_plaintext_in_state"], False)
             provider_plan = client.provider_execution_plan(stack_manifest, "railway")
             self.assertEqual(len(provider_plan["steps"]), len(stack_manifest["resources"]))
+            web_step = next(
+                step
+                for step in provider_plan["steps"]
+                if step["resource_id"] == "service:web"
+            )
+            self.assertEqual(
+                web_step["api_operation"]["graphql_operation"],
+                "serviceCreate",
+            )
         finally:
             client.close()
 

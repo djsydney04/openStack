@@ -40,3 +40,4 @@ Expected behavior:
 - RPC version returns `rpc_version: "2026-07-22"`.
 - Stack YAML validation succeeds and target-specific manifest generation maps `service:web` to Railway for production.
 - Provider details show the adapter contract, auth methods, resource lifecycle support, state ID format, and no plaintext secret storage.
+- Provider details include docs-backed API operation templates for the provider adapter.

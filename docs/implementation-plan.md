@@ -14,6 +14,7 @@ Build a first complete Stackport implementation from the PRD summary:
 - Partial migrations.
 - Rust adapter traits.
 - Provider adapter contracts for auth, resource mapping, read/import, plan, apply, state, and secret policy.
+- Docs-backed provider API operation templates for each adapter contract.
 - JSON-RPC subprocess protocol.
 - Security and secret handling.
 - Automated tests plus a real manual CLI/SDK verification flow.
@@ -28,6 +29,7 @@ Build a first complete Stackport implementation from the PRD summary:
 - Apply logic can run as a dry run through the adapter interface.
 - Provider definitions exist for Vercel, Supabase, Neon, and Railway.
 - Provider execution plans map neutral resources to platform resources before apply.
+- Provider execution plans include the REST or GraphQL operation template adapters will call.
 - Rust, TypeScript, and Python SDKs call the same core engine.
 - Tests cover core validation, importers, planning, RPC, and SDK wrappers.
 - Manual verification exercises CLI, JSON-RPC, TypeScript SDK, and Python SDK.

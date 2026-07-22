@@ -223,6 +223,33 @@ fn provider_registry_captures_platform_contracts() {
     assert!(providers
         .iter()
         .all(|provider| provider.operations.len() >= 6));
+    assert!(providers
+        .iter()
+        .all(|provider| !provider.api.operations.is_empty()));
+
+    let railway = providers
+        .iter()
+        .find(|provider| provider.name == "railway")
+        .expect("railway provider");
+    assert_eq!(
+        railway.api.base_url,
+        "https://backboard.railway.com/graphql/v2"
+    );
+    assert!(railway
+        .api
+        .operations
+        .iter()
+        .any(|operation| operation.graphql_operation.as_deref() == Some("serviceCreate")));
+
+    let vercel = providers
+        .iter()
+        .find(|provider| provider.name == "vercel")
+        .expect("vercel provider");
+    assert!(vercel
+        .api
+        .operations
+        .iter()
+        .any(|operation| operation.path == "/v9/projects/{idOrName}/domains"));
 }
 
 #[test]
@@ -239,13 +266,23 @@ fn provider_execution_plan_maps_stack_resources_to_platform_resources() {
         .iter()
         .any(|step| step.resource_id == "service:web"
             && step.provider == "railway"
-            && step.provider_resource.as_deref() == Some("service")));
+            && step.provider_resource.as_deref() == Some("service")
+            && step
+                .api_operation
+                .as_ref()
+                .and_then(|operation| operation.graphql_operation.as_deref())
+                == Some("serviceCreate")));
     assert!(execution_plan
         .steps
         .iter()
         .any(|step| step.resource_id == "database:primary"
             && step.provider == "neon"
-            && step.provider_resource.as_deref() == Some("project-branch-database")));
+            && step.provider_resource.as_deref() == Some("project-branch-database")
+            && step
+                .api_operation
+                .as_ref()
+                .map(|operation| operation.path.as_str())
+                == Some("/projects")));
     assert!(execution_plan.steps.iter().all(|step| step
         .secret_policy
         .as_ref()

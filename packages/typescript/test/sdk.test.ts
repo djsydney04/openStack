@@ -51,6 +51,12 @@ test("typescript sdk calls the rust rpc engine", async () => {
     assert.equal((railway as { secrets: { stores_plaintext_in_state: boolean } }).secrets.stores_plaintext_in_state, false);
     const providerPlan = await client.providerExecutionPlan(stackManifest, "railway");
     assert.equal((providerPlan as { steps: unknown[] }).steps.length, stackManifest.resources.length);
+    assert.equal(
+      (providerPlan as { steps: Array<{ resource_id: string; api_operation?: { graphql_operation?: string } }> }).steps.find(
+        (step) => step.resource_id === "service:web",
+      )?.api_operation?.graphql_operation,
+      "serviceCreate",
+    );
   } finally {
     client.close();
   }
