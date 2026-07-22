@@ -1,0 +1,52 @@
+version: stackport/app/v1alpha1
+app:
+  name: demo-stack
+  description: App-layer IaC example for a web app and Postgres database
+  tags:
+    - demo
+    - app-layer-iac
+
+targets:
+  preview:
+    provider: vercel
+    region: iad1
+    environment: preview
+  production:
+    provider: railway
+    region: us-west1
+    environment: production
+
+services:
+  web:
+    source:
+      path: .
+    build:
+      framework: nextjs
+      command: npm run build
+      output: .next
+    run:
+      command: npm start
+    depends_on:
+      - primary
+    env:
+      DATABASE_URL:
+        secret: DATABASE_URL
+      NEXT_PUBLIC_APP_ENV: production
+    deploy:
+      replicas: 2
+      health_check: /api/health
+      domains:
+        - demo.example.com
+
+databases:
+  primary:
+    provider: neon
+    engine: postgres
+    version: "16"
+    plan: free
+
+secrets:
+  DATABASE_URL:
+    from: neon:primary:DATABASE_URL
+    description: Connection string for the primary Postgres database
+

@@ -7,6 +7,7 @@ use stackport_core::importers::{import_supabase, import_vercel, SupabaseProject,
 use stackport_core::manifest::{validate_manifest, Manifest, MigrationScope};
 use stackport_core::planner::{create_plan, MigrationPlan};
 use stackport_core::rpc::{handle_rpc_request, JsonRpcRequest};
+use stackport_core::stack_spec::{stack_spec_to_manifest, validate_stack_spec, StackSpec};
 use stackport_core::state::StackState;
 use std::fs;
 use std::io::{self, BufRead, Write};
@@ -52,6 +53,10 @@ enum Command {
         #[arg(long, default_value_t = true)]
         dry_run: bool,
     },
+    Stack {
+        #[command(subcommand)]
+        command: StackCommand,
+    },
     Rpc {
         #[arg(long)]
         once: Option<String>,
@@ -62,6 +67,37 @@ enum Command {
 enum ImportCommand {
     Vercel { input: PathBuf },
     Supabase { input: PathBuf },
+}
+
+#[derive(Debug, Subcommand)]
+enum StackCommand {
+    Validate {
+        stack: PathBuf,
+        #[arg(long)]
+        target: Option<String>,
+    },
+    Manifest {
+        stack: PathBuf,
+        #[arg(long)]
+        target: Option<String>,
+    },
+    Analyze {
+        stack: PathBuf,
+        #[arg(long)]
+        target: String,
+    },
+    Plan {
+        stack: PathBuf,
+        #[arg(long)]
+        target: String,
+    },
+    Apply {
+        stack: PathBuf,
+        #[arg(long)]
+        target: String,
+        #[arg(long, default_value_t = true)]
+        dry_run: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -113,6 +149,53 @@ fn main() -> Result<()> {
             let plan = read_json::<MigrationPlan>(&plan)?;
             print_json(&apply_plan(&plan, &DryRunAdapter, dry_run))?;
         }
+        Command::Stack { command } => match command {
+            StackCommand::Validate { stack, target } => {
+                let stack = read_yaml::<StackSpec>(&stack)?;
+                print_json(
+                    &validate_stack_spec(&stack, target.as_deref()).map_err(anyhow::Error::msg)?,
+                )?;
+            }
+            StackCommand::Manifest { stack, target } => {
+                let stack = read_yaml::<StackSpec>(&stack)?;
+                print_json(
+                    &stack_spec_to_manifest(&stack, target.as_deref())
+                        .map_err(anyhow::Error::msg)?,
+                )?;
+            }
+            StackCommand::Analyze { stack, target } => {
+                let stack = read_yaml::<StackSpec>(&stack)?;
+                let target_provider = stack_target_provider(&stack, &target)?;
+                let manifest =
+                    stack_spec_to_manifest(&stack, Some(&target)).map_err(anyhow::Error::msg)?;
+                print_json(
+                    &analyze_portability(&manifest, &target_provider, None)
+                        .map_err(anyhow::Error::msg)?,
+                )?;
+            }
+            StackCommand::Plan { stack, target } => {
+                let stack = read_yaml::<StackSpec>(&stack)?;
+                let target_provider = stack_target_provider(&stack, &target)?;
+                let manifest =
+                    stack_spec_to_manifest(&stack, Some(&target)).map_err(anyhow::Error::msg)?;
+                print_json(
+                    &create_plan(&manifest, &target_provider, None).map_err(anyhow::Error::msg)?,
+                )?;
+            }
+            StackCommand::Apply {
+                stack,
+                target,
+                dry_run,
+            } => {
+                let stack = read_yaml::<StackSpec>(&stack)?;
+                let target_provider = stack_target_provider(&stack, &target)?;
+                let manifest =
+                    stack_spec_to_manifest(&stack, Some(&target)).map_err(anyhow::Error::msg)?;
+                let plan =
+                    create_plan(&manifest, &target_provider, None).map_err(anyhow::Error::msg)?;
+                print_json(&apply_plan(&plan, &DryRunAdapter, dry_run))?;
+            }
+        },
         Command::Rpc { once } => {
             if let Some(line) = once {
                 let request = serde_json::from_str::<JsonRpcRequest>(&line)
@@ -157,6 +240,21 @@ fn read_json<T: for<'de> serde::Deserialize<'de>>(path: &PathBuf) -> Result<T> {
     let content =
         fs::read_to_string(path).with_context(|| format!("failed to read `{}`", path.display()))?;
     serde_json::from_str(&content).with_context(|| format!("failed to parse `{}`", path.display()))
+}
+
+fn read_yaml<T: for<'de> serde::Deserialize<'de>>(path: &PathBuf) -> Result<T> {
+    let content =
+        fs::read_to_string(path).with_context(|| format!("failed to read `{}`", path.display()))?;
+    serde_yaml::from_str(&content)
+        .with_context(|| format!("failed to parse YAML `{}`", path.display()))
+}
+
+fn stack_target_provider(stack: &StackSpec, target: &str) -> Result<String> {
+    stack
+        .targets
+        .get(target)
+        .map(|target| target.provider.clone())
+        .ok_or_else(|| anyhow::anyhow!("target `{target}` is not defined"))
 }
 
 fn print_json<T: serde::Serialize>(value: &T) -> Result<()> {

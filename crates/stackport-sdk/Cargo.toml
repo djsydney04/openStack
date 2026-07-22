@@ -10,3 +10,4 @@ stackport-core = { path = "../stackport-core" }
 
 [dev-dependencies]
 serde_json.workspace = true
+serde_yaml.workspace = true

@@ -21,6 +21,9 @@ cargo run -q -p stackport-cli -- plan fixtures/manifest.basic.json --target rend
 cargo run -q -p stackport-cli -- diff fixtures/manifest.basic.json fixtures/state.basic.json
 cargo run -q -p stackport-cli -- apply fixtures/plan.render.partial.json --dry-run
 cargo run -q -p stackport-cli -- rpc --once '{"jsonrpc":"2.0","id":"manual-1","method":"stackport.version","params":{}}'
+cargo run -q -p stackport-cli -- stack validate fixtures/stack.app.yaml --target production
+cargo run -q -p stackport-cli -- stack manifest fixtures/stack.app.yaml --target production
+cargo run -q -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production
 ```
 
 Expected behavior:
@@ -33,4 +36,4 @@ Expected behavior:
 - Diff reports update/create/delete against the stale fixture state.
 - Dry-run apply returns a planned create for `web`.
 - RPC version returns `rpc_version: "2026-07-22"`.
-
+- Stack YAML validation succeeds and target-specific manifest generation maps `service:web` to Railway for production.

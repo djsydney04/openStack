@@ -10,6 +10,7 @@ use stackport_core::manifest::{
 };
 use stackport_core::planner::{create_plan, PlanAction};
 use stackport_core::rpc::{handle_rpc_request, JsonRpcRequest};
+use stackport_core::stack_spec::{stack_spec_to_manifest, validate_stack_spec, StackSpec};
 use stackport_core::state::{StackState, StateResource};
 
 #[test]
@@ -154,6 +155,49 @@ fn handles_json_rpc_version_and_plan() {
         plan_response.result.unwrap()["target_provider"],
         serde_json::json!("render")
     );
+}
+
+#[test]
+fn converts_yaml_stack_spec_into_manifest_for_target_provider() {
+    let spec: StackSpec = serde_yaml::from_str(include_str!("../../../fixtures/stack.app.yaml"))
+        .expect("stack yaml should parse");
+
+    let report = validate_stack_spec(&spec, Some("production")).expect("stack should validate");
+    assert!(report.valid);
+    assert_eq!(report.manifest_resources, 3);
+
+    let manifest = stack_spec_to_manifest(&spec, Some("production")).expect("manifest");
+    let web = manifest
+        .resources
+        .iter()
+        .find(|resource| resource.id == "service:web")
+        .expect("web service");
+    assert_eq!(web.provider.as_deref(), Some("railway"));
+    assert!(manifest.variables.contains_key("DATABASE_URL"));
+}
+
+#[test]
+fn changing_stack_target_changes_deployment_provider() {
+    let spec: StackSpec = serde_yaml::from_str(include_str!("../../../fixtures/stack.app.yaml"))
+        .expect("stack yaml should parse");
+
+    let preview = stack_spec_to_manifest(&spec, Some("preview")).expect("preview manifest");
+    let production =
+        stack_spec_to_manifest(&spec, Some("production")).expect("production manifest");
+
+    let preview_web = preview
+        .resources
+        .iter()
+        .find(|resource| resource.id == "service:web")
+        .unwrap();
+    let production_web = production
+        .resources
+        .iter()
+        .find(|resource| resource.id == "service:web")
+        .unwrap();
+
+    assert_eq!(preview_web.provider.as_deref(), Some("vercel"));
+    assert_eq!(production_web.provider.as_deref(), Some("railway"));
 }
 
 fn sample_manifest() -> Manifest {

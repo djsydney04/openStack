@@ -129,6 +129,16 @@ pub fn default_capabilities(provider: &str) -> ProviderCapabilities {
         ],
     );
     catalog.insert(
+        "railway",
+        vec![
+            Capability::Build,
+            Capability::Postgres,
+            Capability::Secrets,
+            Capability::CustomDomains,
+            Capability::Cron,
+        ],
+    );
+    catalog.insert(
         "netlify",
         vec![
             Capability::Build,
@@ -138,6 +148,7 @@ pub fn default_capabilities(provider: &str) -> ProviderCapabilities {
             Capability::CustomDomains,
         ],
     );
+    catalog.insert("neon", vec![Capability::Postgres, Capability::Secrets]);
 
     ProviderCapabilities {
         provider: provider.to_string(),

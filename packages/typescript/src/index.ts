@@ -60,6 +60,8 @@ export interface StackportClient {
   close(): void;
   version(): Promise<StackportVersion>;
   validate(manifest: Manifest): Promise<JsonValue>;
+  validateStackSpec(spec: JsonValue, target?: string): Promise<JsonValue>;
+  stackSpecToManifest(spec: JsonValue, target?: string): Promise<Manifest>;
   importVercel(project: JsonValue): Promise<Manifest>;
   importSupabase(project: JsonValue): Promise<Manifest>;
   analyze(manifest: Manifest, targetProvider: string): Promise<JsonValue>;
@@ -116,6 +118,16 @@ export function createStackportClient(options: StackportClientOptions = {}): Sta
     },
     version: () => request<StackportVersion>("stackport.version", {}),
     validate: (manifest) => request<JsonValue>("manifest.validate", manifest as unknown as JsonValue),
+    validateStackSpec: (spec, target) =>
+      request<JsonValue>("stackSpec.validate", {
+        spec,
+        ...(target ? { target } : {}),
+      }),
+    stackSpecToManifest: (spec, target) =>
+      request<Manifest>("stackSpec.toManifest", {
+        spec,
+        ...(target ? { target } : {}),
+      }),
     importVercel: (project) => request<Manifest>("import.vercel", project),
     importSupabase: (project) => request<Manifest>("import.supabase", project),
     analyze: (manifest, targetProvider) =>
@@ -137,4 +149,3 @@ export function createStackportClient(options: StackportClientOptions = {}): Sta
     dryRun: (plan) => request<JsonValue>("apply.dryRun", { plan, dry_run: true }),
   };
 }
-

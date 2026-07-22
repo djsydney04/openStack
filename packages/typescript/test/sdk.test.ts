@@ -20,6 +20,33 @@ test("typescript sdk calls the rust rpc engine", async () => {
 
     const plan = await client.plan(manifest, "render", { include_resources: ["web"] });
     assert.equal((plan as { partial: boolean }).partial, true);
+
+    const stackSpec = {
+      version: "stackport/app/v1alpha1",
+      app: { name: "sdk-stack" },
+      targets: {
+        preview: { provider: "vercel" },
+        production: { provider: "railway" },
+      },
+      services: {
+        web: {
+          build: { framework: "nextjs", command: "npm run build" },
+          env: {
+            DATABASE_URL: { secret: "DATABASE_URL" },
+          },
+        },
+      },
+      databases: {
+        primary: { provider: "neon", engine: "postgres" },
+      },
+      secrets: {
+        DATABASE_URL: { from: "neon:primary:DATABASE_URL" },
+      },
+    };
+    const stackValidation = await client.validateStackSpec(stackSpec, "production");
+    assert.equal((stackValidation as { valid: boolean }).valid, true);
+    const stackManifest = await client.stackSpecToManifest(stackSpec, "production");
+    assert.equal(stackManifest.resources.find((resource) => resource.id === "service:web")?.provider, "railway");
   } finally {
     client.close();
   }

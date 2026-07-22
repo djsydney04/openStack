@@ -22,6 +22,47 @@ cargo run -p stackport-cli -- analyze fixtures/manifest.basic.json --target rend
 cargo run -p stackport-cli -- plan fixtures/manifest.basic.json --target render
 ```
 
+## App-Layer IaC YAML
+
+Stackport also supports a simple YAML authoring format for app-layer
+infrastructure. The YAML describes services, databases, secrets, domains, and
+deployment targets. Changing the selected target changes deployment details
+without rewriting provider-specific manifests.
+
+```sh
+cargo run -p stackport-cli -- stack validate fixtures/stack.app.yaml --target production
+cargo run -p stackport-cli -- stack manifest fixtures/stack.app.yaml --target production
+cargo run -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production
+```
+
+Example:
+
+```yaml
+version: stackport/app/v1alpha1
+app:
+  name: demo-stack
+targets:
+  preview:
+    provider: vercel
+  production:
+    provider: railway
+services:
+  web:
+    build:
+      framework: nextjs
+      command: npm run build
+    env:
+      DATABASE_URL:
+        secret: DATABASE_URL
+databases:
+  primary:
+    provider: neon
+    engine: postgres
+secrets:
+  DATABASE_URL:
+    from: neon:primary:DATABASE_URL
+```
+
 ## RPC
 
 Start a line-delimited JSON-RPC subprocess:
@@ -43,4 +84,3 @@ Each response includes either `result` or `error`.
 Stackport manifests reference secrets by name. Importers reject likely secret
 values and preserve only secret references. Apply is dry-run only until a caller
 provides a concrete provider adapter from the Rust SDK.
-

@@ -5,6 +5,7 @@ pub mod importers;
 pub mod manifest;
 pub mod planner;
 pub mod rpc;
+pub mod stack_spec;
 pub mod state;
 
 pub use analysis::{analyze_portability, ProviderCapabilities};
@@ -14,4 +15,5 @@ pub use importers::{import_supabase, import_vercel};
 pub use manifest::{validate_manifest, Manifest, ManifestError, MigrationScope, Resource};
 pub use planner::{create_plan, MigrationPlan, PlanStep};
 pub use rpc::{handle_rpc_request, JsonRpcRequest, JsonRpcResponse, STACKPORT_RPC_VERSION};
+pub use stack_spec::{stack_spec_to_manifest, validate_stack_spec, StackSpec, StackSpecReport};
 pub use state::{StackState, StateResource};

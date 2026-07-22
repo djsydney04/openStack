@@ -26,6 +26,38 @@ class StackportSdkTest(unittest.TestCase):
                 {"include_resources": ["web"], "exclude_resources": []},
             )
             self.assertIs(plan["partial"], True)
+
+            stack_spec = {
+                "version": "stackport/app/v1alpha1",
+                "app": {"name": "sdk-stack"},
+                "targets": {
+                    "preview": {"provider": "vercel"},
+                    "production": {"provider": "railway"},
+                },
+                "services": {
+                    "web": {
+                        "build": {"framework": "nextjs", "command": "npm run build"},
+                        "env": {"DATABASE_URL": {"secret": "DATABASE_URL"}},
+                    }
+                },
+                "databases": {
+                    "primary": {"provider": "neon", "engine": "postgres"},
+                },
+                "secrets": {
+                    "DATABASE_URL": {"from": "neon:primary:DATABASE_URL"},
+                },
+            }
+            self.assertIs(
+                client.validate_stack_spec(stack_spec, "production")["valid"],
+                True,
+            )
+            stack_manifest = client.stack_spec_to_manifest(stack_spec, "production")
+            web = next(
+                resource
+                for resource in stack_manifest["resources"]
+                if resource["id"] == "service:web"
+            )
+            self.assertEqual(web["provider"], "railway")
         finally:
             client.close()
 

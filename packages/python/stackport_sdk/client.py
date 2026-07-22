@@ -44,6 +44,22 @@ class StackportClient:
     def validate(self, manifest: dict[str, Any]) -> dict[str, Any]:
         return self.request("manifest.validate", manifest)
 
+    def validate_stack_spec(
+        self, spec: dict[str, Any], target: str | None = None
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"spec": spec}
+        if target is not None:
+            params["target"] = target
+        return self.request("stackSpec.validate", params)
+
+    def stack_spec_to_manifest(
+        self, spec: dict[str, Any], target: str | None = None
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"spec": spec}
+        if target is not None:
+            params["target"] = target
+        return self.request("stackSpec.toManifest", params)
+
     def import_vercel(self, project: dict[str, Any]) -> dict[str, Any]:
         return self.request("import.vercel", project)
 
