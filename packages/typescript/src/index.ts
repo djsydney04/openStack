@@ -62,6 +62,9 @@ export interface StackportClient {
   validate(manifest: Manifest): Promise<JsonValue>;
   validateStackSpec(spec: JsonValue, target?: string): Promise<JsonValue>;
   stackSpecToManifest(spec: JsonValue, target?: string): Promise<Manifest>;
+  providers(): Promise<JsonValue>;
+  provider(provider: string): Promise<JsonValue>;
+  providerExecutionPlan(manifest: Manifest, targetProvider: string): Promise<JsonValue>;
   importVercel(project: JsonValue): Promise<Manifest>;
   importSupabase(project: JsonValue): Promise<Manifest>;
   analyze(manifest: Manifest, targetProvider: string): Promise<JsonValue>;
@@ -127,6 +130,13 @@ export function createStackportClient(options: StackportClientOptions = {}): Sta
       request<Manifest>("stackSpec.toManifest", {
         spec,
         ...(target ? { target } : {}),
+      }),
+    providers: () => request<JsonValue>("providers.list", {}),
+    provider: (provider) => request<JsonValue>("providers.show", { provider }),
+    providerExecutionPlan: (manifest, targetProvider) =>
+      request<JsonValue>("providers.executionPlan", {
+        manifest: manifest as unknown as JsonValue,
+        target_provider: targetProvider,
       }),
     importVercel: (project) => request<Manifest>("import.vercel", project),
     importSupabase: (project) => request<Manifest>("import.supabase", project),

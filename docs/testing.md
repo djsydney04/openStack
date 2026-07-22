@@ -24,6 +24,8 @@ cargo run -q -p stackport-cli -- rpc --once '{"jsonrpc":"2.0","id":"manual-1","m
 cargo run -q -p stackport-cli -- stack validate fixtures/stack.app.yaml --target production
 cargo run -q -p stackport-cli -- stack manifest fixtures/stack.app.yaml --target production
 cargo run -q -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production
+cargo run -q -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production --provider-details
+cargo run -q -p stackport-cli -- providers show railway
 ```
 
 Expected behavior:
@@ -37,3 +39,4 @@ Expected behavior:
 - Dry-run apply returns a planned create for `web`.
 - RPC version returns `rpc_version: "2026-07-22"`.
 - Stack YAML validation succeeds and target-specific manifest generation maps `service:web` to Railway for production.
+- Provider details show the adapter contract, auth methods, resource lifecycle support, state ID format, and no plaintext secret storage.

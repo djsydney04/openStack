@@ -1,4 +1,5 @@
 use crate::manifest::{validate_manifest, Capability, Manifest, ResourceKind};
+use crate::providers::provider_definition;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -85,6 +86,13 @@ pub fn analyze_portability(
 }
 
 pub fn default_capabilities(provider: &str) -> ProviderCapabilities {
+    if let Some(definition) = provider_definition(provider) {
+        return ProviderCapabilities {
+            provider: definition.name,
+            capabilities: definition.capabilities,
+        };
+    }
+
     let mut catalog = HashMap::<&str, Vec<Capability>>::new();
     catalog.insert(
         "vercel",
@@ -129,16 +137,6 @@ pub fn default_capabilities(provider: &str) -> ProviderCapabilities {
         ],
     );
     catalog.insert(
-        "railway",
-        vec![
-            Capability::Build,
-            Capability::Postgres,
-            Capability::Secrets,
-            Capability::CustomDomains,
-            Capability::Cron,
-        ],
-    );
-    catalog.insert(
         "netlify",
         vec![
             Capability::Build,
@@ -148,8 +146,6 @@ pub fn default_capabilities(provider: &str) -> ProviderCapabilities {
             Capability::CustomDomains,
         ],
     );
-    catalog.insert("neon", vec![Capability::Postgres, Capability::Secrets]);
-
     ProviderCapabilities {
         provider: provider.to_string(),
         capabilities: catalog

@@ -4,6 +4,7 @@ use crate::diff::diff_state;
 use crate::importers::{import_supabase, import_vercel, SupabaseProject, VercelProject};
 use crate::manifest::{validate_manifest, Manifest, MigrationScope};
 use crate::planner::{create_plan, MigrationPlan};
+use crate::providers::{provider_definition, provider_execution_plan, provider_registry};
 use crate::stack_spec::{stack_spec_to_manifest, validate_stack_spec, StackSpec};
 use crate::state::StackState;
 use serde::{Deserialize, Serialize};
@@ -71,6 +72,11 @@ pub struct StackSpecParams {
     pub target: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderParams {
+    pub provider: String,
+}
+
 pub fn handle_rpc_request(request: JsonRpcRequest) -> JsonRpcResponse {
     if request.jsonrpc != "2.0" {
         return error(request.id, -32600, "jsonrpc must be `2.0`");
@@ -113,6 +119,19 @@ pub fn handle_rpc_request(request: JsonRpcRequest) -> JsonRpcResponse {
             .and_then(to_value),
         "stackSpec.toManifest" => parse_params::<StackSpecParams>(request.params)
             .and_then(|params| stack_spec_to_manifest(&params.spec, params.target.as_deref()))
+            .and_then(to_value),
+        "providers.list" => to_value(provider_registry()),
+        "providers.show" => parse_params::<ProviderParams>(request.params)
+            .and_then(|params| {
+                provider_definition(&params.provider)
+                    .ok_or_else(|| format!("provider `{}` is not registered", params.provider))
+            })
+            .and_then(to_value),
+        "providers.executionPlan" => parse_params::<PlanParams>(request.params)
+            .and_then(|params| {
+                let plan = create_plan(&params.manifest, &params.target_provider, params.scope)?;
+                Ok(provider_execution_plan(&params.manifest, &plan))
+            })
             .and_then(to_value),
         _ => return error(request.id, -32601, "method not found"),
     };

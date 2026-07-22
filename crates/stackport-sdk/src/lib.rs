@@ -1,9 +1,10 @@
 pub use stackport_core::{
     analyze_portability, apply_plan, create_plan, diff_state, import_supabase, import_vercel,
-    stack_spec_to_manifest, validate_manifest, validate_stack_spec, ApplyReport, DiffReport,
-    DryRunAdapter, JsonRpcRequest, JsonRpcResponse, Manifest, ManifestError, MigrationPlan,
-    MigrationScope, PlanStep, ProviderAdapter, ProviderCapabilities, Resource, StackSpec,
-    StackSpecReport, StackState, StateResource, STACKPORT_RPC_VERSION,
+    provider_execution_plan, stack_spec_to_manifest, validate_manifest, validate_stack_spec,
+    ApplyReport, DiffReport, DryRunAdapter, JsonRpcRequest, JsonRpcResponse, Manifest,
+    ManifestError, MigrationPlan, MigrationScope, PlanStep, ProviderAdapter, ProviderCapabilities,
+    ProviderExecutionPlan, Resource, StackSpec, StackSpecReport, StackState, StateResource,
+    STACKPORT_RPC_VERSION,
 };
 
 pub struct StackportEngine;
@@ -39,6 +40,14 @@ impl StackportEngine {
 
     pub fn dry_run(&self, plan: &MigrationPlan) -> ApplyReport {
         apply_plan(plan, &DryRunAdapter, true)
+    }
+
+    pub fn provider_execution_plan(
+        &self,
+        manifest: &Manifest,
+        plan: &MigrationPlan,
+    ) -> ProviderExecutionPlan {
+        provider_execution_plan(manifest, plan)
     }
 
     pub fn validate_stack_spec(

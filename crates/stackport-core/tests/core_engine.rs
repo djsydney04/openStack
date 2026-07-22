@@ -9,6 +9,7 @@ use stackport_core::manifest::{
     MANIFEST_SCHEMA_VERSION,
 };
 use stackport_core::planner::{create_plan, PlanAction};
+use stackport_core::providers::{provider_execution_plan, provider_registry};
 use stackport_core::rpc::{handle_rpc_request, JsonRpcRequest};
 use stackport_core::stack_spec::{stack_spec_to_manifest, validate_stack_spec, StackSpec};
 use stackport_core::state::{StackState, StateResource};
@@ -105,10 +106,14 @@ fn diffs_manifest_against_state() {
     let state = StackState {
         schema_version: "stackport-state/v1".to_string(),
         provider: "render".to_string(),
+        providers: vec![],
         resources: vec![StateResource {
             id: "old".to_string(),
+            provider: Some("render".to_string()),
             provider_id: "old-1".to_string(),
+            provider_resource: Some("service".to_string()),
             fingerprint: "stale".to_string(),
+            secrets: vec![],
         }],
     };
 
@@ -198,6 +203,54 @@ fn changing_stack_target_changes_deployment_provider() {
 
     assert_eq!(preview_web.provider.as_deref(), Some("vercel"));
     assert_eq!(production_web.provider.as_deref(), Some("railway"));
+}
+
+#[test]
+fn provider_registry_captures_platform_contracts() {
+    let providers = provider_registry();
+    let names = providers
+        .iter()
+        .map(|provider| provider.name.as_str())
+        .collect::<std::collections::HashSet<_>>();
+
+    assert!(names.contains("vercel"));
+    assert!(names.contains("supabase"));
+    assert!(names.contains("neon"));
+    assert!(names.contains("railway"));
+    assert!(providers
+        .iter()
+        .all(|provider| !provider.secrets.stores_plaintext_in_state));
+    assert!(providers
+        .iter()
+        .all(|provider| provider.operations.len() >= 6));
+}
+
+#[test]
+fn provider_execution_plan_maps_stack_resources_to_platform_resources() {
+    let spec: StackSpec = serde_yaml::from_str(include_str!("../../../fixtures/stack.app.yaml"))
+        .expect("stack yaml should parse");
+    let manifest = stack_spec_to_manifest(&spec, Some("production")).expect("manifest");
+    let plan = create_plan(&manifest, "railway", None).expect("plan");
+    let execution_plan = provider_execution_plan(&manifest, &plan);
+
+    assert!(execution_plan.warnings.is_empty());
+    assert!(execution_plan
+        .steps
+        .iter()
+        .any(|step| step.resource_id == "service:web"
+            && step.provider == "railway"
+            && step.provider_resource.as_deref() == Some("service")));
+    assert!(execution_plan
+        .steps
+        .iter()
+        .any(|step| step.resource_id == "database:primary"
+            && step.provider == "neon"
+            && step.provider_resource.as_deref() == Some("project-branch-database")));
+    assert!(execution_plan.steps.iter().all(|step| step
+        .secret_policy
+        .as_ref()
+        .map(|policy| !policy.stores_plaintext_in_state)
+        .unwrap_or(true)));
 }
 
 fn sample_manifest() -> Manifest {

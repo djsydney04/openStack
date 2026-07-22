@@ -6,6 +6,7 @@ use stackport_core::diff::diff_state;
 use stackport_core::importers::{import_supabase, import_vercel, SupabaseProject, VercelProject};
 use stackport_core::manifest::{validate_manifest, Manifest, MigrationScope};
 use stackport_core::planner::{create_plan, MigrationPlan};
+use stackport_core::providers::{provider_definition, provider_execution_plan, provider_registry};
 use stackport_core::rpc::{handle_rpc_request, JsonRpcRequest};
 use stackport_core::stack_spec::{stack_spec_to_manifest, validate_stack_spec, StackSpec};
 use stackport_core::state::StackState;
@@ -57,6 +58,10 @@ enum Command {
         #[command(subcommand)]
         command: StackCommand,
     },
+    Providers {
+        #[command(subcommand)]
+        command: ProvidersCommand,
+    },
     Rpc {
         #[arg(long)]
         once: Option<String>,
@@ -90,6 +95,8 @@ enum StackCommand {
         stack: PathBuf,
         #[arg(long)]
         target: String,
+        #[arg(long)]
+        provider_details: bool,
     },
     Apply {
         stack: PathBuf,
@@ -98,6 +105,12 @@ enum StackCommand {
         #[arg(long, default_value_t = true)]
         dry_run: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum ProvidersCommand {
+    List,
+    Show { provider: String },
 }
 
 fn main() -> Result<()> {
@@ -173,14 +186,22 @@ fn main() -> Result<()> {
                         .map_err(anyhow::Error::msg)?,
                 )?;
             }
-            StackCommand::Plan { stack, target } => {
+            StackCommand::Plan {
+                stack,
+                target,
+                provider_details,
+            } => {
                 let stack = read_yaml::<StackSpec>(&stack)?;
                 let target_provider = stack_target_provider(&stack, &target)?;
                 let manifest =
                     stack_spec_to_manifest(&stack, Some(&target)).map_err(anyhow::Error::msg)?;
-                print_json(
-                    &create_plan(&manifest, &target_provider, None).map_err(anyhow::Error::msg)?,
-                )?;
+                let plan =
+                    create_plan(&manifest, &target_provider, None).map_err(anyhow::Error::msg)?;
+                if provider_details {
+                    print_json(&provider_execution_plan(&manifest, &plan))?;
+                } else {
+                    print_json(&plan)?;
+                }
             }
             StackCommand::Apply {
                 stack,
@@ -194,6 +215,16 @@ fn main() -> Result<()> {
                 let plan =
                     create_plan(&manifest, &target_provider, None).map_err(anyhow::Error::msg)?;
                 print_json(&apply_plan(&plan, &DryRunAdapter, dry_run))?;
+            }
+        },
+        Command::Providers { command } => match command {
+            ProvidersCommand::List => {
+                print_json(&provider_registry())?;
+            }
+            ProvidersCommand::Show { provider } => {
+                let definition = provider_definition(&provider)
+                    .ok_or_else(|| anyhow::anyhow!("provider `{provider}` is not registered"))?;
+                print_json(&definition)?;
             }
         },
         Command::Rpc { once } => {

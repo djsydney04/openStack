@@ -33,7 +33,14 @@ without rewriting provider-specific manifests.
 cargo run -p stackport-cli -- stack validate fixtures/stack.app.yaml --target production
 cargo run -p stackport-cli -- stack manifest fixtures/stack.app.yaml --target production
 cargo run -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production
+cargo run -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production --provider-details
+cargo run -p stackport-cli -- providers show railway
 ```
+
+Provider definitions are part of the product contract. Each provider declares
+auth methods, resource mappings, read/import/plan/apply/delete support, state ID
+policy, and secret handling. Vercel, Supabase, Neon, and Railway are registered
+first; Render, Fly, and Netlify can be added behind the same contract.
 
 Example:
 

@@ -58,6 +58,10 @@ class StackportSdkTest(unittest.TestCase):
                 if resource["id"] == "service:web"
             )
             self.assertEqual(web["provider"], "railway")
+            railway = client.provider("railway")
+            self.assertIs(railway["secrets"]["stores_plaintext_in_state"], False)
+            provider_plan = client.provider_execution_plan(stack_manifest, "railway")
+            self.assertEqual(len(provider_plan["steps"]), len(stack_manifest["resources"]))
         finally:
             client.close()
 

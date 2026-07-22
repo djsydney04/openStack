@@ -60,6 +60,20 @@ class StackportClient:
             params["target"] = target
         return self.request("stackSpec.toManifest", params)
 
+    def providers(self) -> dict[str, Any]:
+        return self.request("providers.list", {})
+
+    def provider(self, provider: str) -> dict[str, Any]:
+        return self.request("providers.show", {"provider": provider})
+
+    def provider_execution_plan(
+        self, manifest: dict[str, Any], target_provider: str
+    ) -> dict[str, Any]:
+        return self.request(
+            "providers.executionPlan",
+            {"manifest": manifest, "target_provider": target_provider},
+        )
+
     def import_vercel(self, project: dict[str, Any]) -> dict[str, Any]:
         return self.request("import.vercel", project)
 
