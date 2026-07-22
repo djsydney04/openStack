@@ -1,0 +1,16 @@
+{
+  "target_provider": "render",
+  "partial": true,
+  "steps": [
+    {
+      "resource_id": "web",
+      "action": "create",
+      "reason": "target provider has required capabilities",
+      "depends_on": ["database"]
+    }
+  ],
+  "warnings": [
+    "resource `web` depends on `database` outside the selected migration scope"
+  ]
+}
+

@@ -1,0 +1,40 @@
+{
+  "schema_version": "stackport/v1",
+  "application": {
+    "name": "demo-stack",
+    "description": "A basic web and database stack",
+    "tags": ["demo"]
+  },
+  "resources": [
+    {
+      "id": "database",
+      "kind": "database",
+      "provider": "supabase",
+      "capabilities": ["postgres"],
+      "depends_on": [],
+      "properties": {
+        "engine": "postgres",
+        "version": "16"
+      }
+    },
+    {
+      "id": "web",
+      "kind": "web_service",
+      "provider": "vercel",
+      "capabilities": ["build", "serverless_functions"],
+      "depends_on": ["database"],
+      "properties": {
+        "framework": "nextjs",
+        "build_command": "npm run build"
+      }
+    }
+  ],
+  "variables": {
+    "DATABASE_URL": {
+      "description": "Database connection string",
+      "secret_ref": "supabase:DATABASE_URL",
+      "default": null
+    }
+  }
+}
+

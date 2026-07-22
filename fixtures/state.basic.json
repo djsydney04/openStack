@@ -1,0 +1,17 @@
+{
+  "schema_version": "stackport-state/v1",
+  "provider": "render",
+  "resources": [
+    {
+      "id": "database",
+      "provider_id": "db-123",
+      "fingerprint": "stale"
+    },
+    {
+      "id": "old-worker",
+      "provider_id": "worker-123",
+      "fingerprint": "old"
+    }
+  ]
+}
+

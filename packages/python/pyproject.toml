@@ -1,0 +1,9 @@
+[project]
+name = "stackport-sdk"
+version = "0.1.0"
+description = "Python SDK for Stackport subprocess RPC"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
