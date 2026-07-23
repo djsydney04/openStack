@@ -67,15 +67,146 @@ class StackportClient:
         return self.request("providers.show", {"provider": provider})
 
     def provider_execution_plan(
-        self, manifest: dict[str, Any], target_provider: str
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        state: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "manifest": manifest,
+            "target_provider": target_provider,
+        }
+        if state is not None:
+            params["state"] = state
         return self.request(
             "providers.executionPlan",
-            {"manifest": manifest, "target_provider": target_provider},
+            params,
         )
 
     def import_vercel(self, project: dict[str, Any]) -> dict[str, Any]:
         return self.request("import.vercel", project)
+
+    def provider_request_plan(
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        contexts: dict[str, Any] | None = None,
+        scope: dict[str, Any] | None = None,
+        state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "manifest": manifest,
+            "target_provider": target_provider,
+        }
+        if contexts is not None:
+            params["contexts"] = contexts
+        if scope is not None:
+            params["scope"] = scope
+        if state is not None:
+            params["state"] = state
+        return self.request("providers.requestPlan", params)
+
+    def provider_read_plan(
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        contexts: dict[str, Any] | None = None,
+        state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "manifest": manifest,
+            "target_provider": target_provider,
+        }
+        if contexts is not None:
+            params["contexts"] = contexts
+        if state is not None:
+            params["state"] = state
+        return self.request("providers.readPlan", params)
+
+    def provider_import_plan(
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        contexts: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "manifest": manifest,
+            "target_provider": target_provider,
+        }
+        if contexts is not None:
+            params["contexts"] = contexts
+        return self.request("providers.importPlan", params)
+
+    def read_provider_state(
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        contexts: dict[str, Any],
+        state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "manifest": manifest,
+            "target_provider": target_provider,
+            "contexts": contexts,
+        }
+        if state is not None:
+            params["state"] = state
+        return self.request("providers.read", params)
+
+    def import_provider_state(
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        contexts: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.request(
+            "providers.import",
+            {
+                "manifest": manifest,
+                "target_provider": target_provider,
+                "contexts": contexts,
+            },
+        )
+
+    def refresh_provider_plan(
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        contexts: dict[str, Any],
+        state: dict[str, Any],
+        scope: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "manifest": manifest,
+            "target_provider": target_provider,
+            "contexts": contexts,
+            "state": state,
+        }
+        if scope is not None:
+            params["scope"] = scope
+        return self.request("providers.refreshPlan", params)
+
+    def apply_provider_plan(
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        contexts: dict[str, Any],
+        *,
+        confirm: bool,
+        scope: dict[str, Any] | None = None,
+        state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "manifest": manifest,
+            "target_provider": target_provider,
+            "contexts": contexts,
+            "confirm": confirm,
+        }
+        if scope is not None:
+            params["scope"] = scope
+        if state is not None:
+            params["state"] = state
+        return self.request("providers.apply", params)
 
     def import_supabase(self, project: dict[str, Any]) -> dict[str, Any]:
         return self.request("import.supabase", project)
@@ -91,6 +222,7 @@ class StackportClient:
         manifest: dict[str, Any],
         target_provider: str,
         scope: dict[str, Any] | None = None,
+        state: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
             "manifest": manifest,
@@ -98,6 +230,8 @@ class StackportClient:
         }
         if scope is not None:
             params["scope"] = scope
+        if state is not None:
+            params["state"] = state
         return self.request("plan.create", params)
 
     def diff(self, manifest: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:

@@ -1,9 +1,20 @@
 # Provider API Contracts
 
 Stackport treats each provider adapter as a small contract around an official
-API surface. The core engine does not execute HTTP requests yet, but it can now
-produce the API operation template that an adapter will use for read/import,
-plan, create, update, and delete.
+API surface. The core compiles these definitions into typed, inspectable request
+plans and executes them through a shared HTTP transport. REST and GraphQL
+adapters share auth resolution, identifier substitution, response redaction,
+failure reporting, and state advancement.
+
+The runtime has three boundaries:
+
+1. Request planning is pure and serializable. It contains URLs, operation names,
+   unresolved identifiers, and environment variable names, but no credentials.
+2. Execution resolves credentials and secret references in memory and performs
+   HTTP requests. Apply is fail-fast; independent read/import observations are
+   not.
+3. Reports contain status, provider IDs, identifiers, and redacted observed
+   configuration. State advances only for successful mutations.
 
 ## Vercel
 
@@ -11,7 +22,10 @@ plan, create, update, and delete.
 - Base URL: `https://api.vercel.com`
 - Auth: `Authorization: Bearer ${VERCEL_TOKEN}`
 - Resource mappings:
+  - `project` -> project
   - `web_service` -> project
+  - `build` -> deployment
+  - `deploy_hook` -> manual lifecycle
   - `secret` -> project environment variable
   - `domain` -> project domain
 - Primary docs:
@@ -25,6 +39,7 @@ plan, create, update, and delete.
 - Base URL: `https://api.supabase.com`
 - Auth: `Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}`
 - Resource mappings:
+  - `project` -> project database
   - `database` -> project database
   - `auth` -> auth config
   - `storage_bucket` -> storage bucket
@@ -41,7 +56,10 @@ plan, create, update, and delete.
 - Base URL: `https://console.neon.tech/api/v2`
 - Auth: `Authorization: Bearer ${NEON_API_KEY}`
 - Resource mappings:
-  - `database` -> project, branch, database, role, connection URI
+  - `project` / `database` -> project, default branch, and database
+  - `database_branch` -> branch
+  - `database_role` -> role
+  - `connection_string` -> runtime-only connection URI reference
   - `secret` -> connection string reference
 - Primary docs:
   - `https://api-docs.neon.tech/reference/getting-started-with-neon-api`
@@ -56,6 +74,8 @@ plan, create, update, and delete.
   - `Authorization: Bearer ${RAILWAY_TOKEN}`
   - `Project-Access-Token: ${RAILWAY_PROJECT_TOKEN}`
 - Resource mappings:
+  - `project` -> project
+  - `environment` -> environment
   - `web_service` -> service
   - `database` -> Postgres service
   - `secret` -> variable
@@ -70,5 +90,7 @@ plan, create, update, and delete.
 
 Provider API specs may include operations that write secret values, but
 Stackport state and plan output must never store those values. State stores only
-provider IDs, provider resource names, fingerprints, and secret references.
-
+provider IDs, provider resource names, identifiers, last-applied configuration,
+fingerprints, and secret references. Neon connection URIs and returned provider
+credentials can flow directly to a dependent request in memory and are then
+discarded.

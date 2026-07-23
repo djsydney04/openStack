@@ -64,11 +64,55 @@ export interface StackportClient {
   stackSpecToManifest(spec: JsonValue, target?: string): Promise<Manifest>;
   providers(): Promise<JsonValue>;
   provider(provider: string): Promise<JsonValue>;
-  providerExecutionPlan(manifest: Manifest, targetProvider: string): Promise<JsonValue>;
+  providerExecutionPlan(manifest: Manifest, targetProvider: string, state?: JsonValue): Promise<JsonValue>;
+  providerRequestPlan(
+    manifest: Manifest,
+    targetProvider: string,
+    contexts?: JsonValue,
+    scope?: MigrationScope,
+    state?: JsonValue,
+  ): Promise<JsonValue>;
+  providerReadPlan(
+    manifest: Manifest,
+    targetProvider: string,
+    contexts?: JsonValue,
+    state?: JsonValue,
+  ): Promise<JsonValue>;
+  providerImportPlan(
+    manifest: Manifest,
+    targetProvider: string,
+    contexts?: JsonValue,
+  ): Promise<JsonValue>;
+  readProviderState(
+    manifest: Manifest,
+    targetProvider: string,
+    contexts: JsonValue,
+    state?: JsonValue,
+  ): Promise<JsonValue>;
+  importProviderState(
+    manifest: Manifest,
+    targetProvider: string,
+    contexts: JsonValue,
+  ): Promise<JsonValue>;
+  refreshProviderPlan(
+    manifest: Manifest,
+    targetProvider: string,
+    contexts: JsonValue,
+    state: JsonValue,
+    scope?: MigrationScope,
+  ): Promise<JsonValue>;
+  applyProviderPlan(
+    manifest: Manifest,
+    targetProvider: string,
+    contexts: JsonValue,
+    confirm: boolean,
+    scope?: MigrationScope,
+    state?: JsonValue,
+  ): Promise<JsonValue>;
   importVercel(project: JsonValue): Promise<Manifest>;
   importSupabase(project: JsonValue): Promise<Manifest>;
   analyze(manifest: Manifest, targetProvider: string): Promise<JsonValue>;
-  plan(manifest: Manifest, targetProvider: string, scope?: MigrationScope): Promise<JsonValue>;
+  plan(manifest: Manifest, targetProvider: string, scope?: MigrationScope, state?: JsonValue): Promise<JsonValue>;
   diff(manifest: Manifest, state: JsonValue): Promise<JsonValue>;
   dryRun(plan: JsonValue): Promise<JsonValue>;
 }
@@ -133,10 +177,62 @@ export function createStackportClient(options: StackportClientOptions = {}): Sta
       }),
     providers: () => request<JsonValue>("providers.list", {}),
     provider: (provider) => request<JsonValue>("providers.show", { provider }),
-    providerExecutionPlan: (manifest, targetProvider) =>
+    providerExecutionPlan: (manifest, targetProvider, state) =>
       request<JsonValue>("providers.executionPlan", {
         manifest: manifest as unknown as JsonValue,
         target_provider: targetProvider,
+        ...(state ? { state } : {}),
+      }),
+    providerRequestPlan: (manifest, targetProvider, contexts, scope, state) =>
+      request<JsonValue>("providers.requestPlan", {
+        manifest: manifest as unknown as JsonValue,
+        target_provider: targetProvider,
+        ...(contexts ? { contexts } : {}),
+        ...(scope ? { scope: scope as unknown as JsonValue } : {}),
+        ...(state ? { state } : {}),
+      }),
+    providerReadPlan: (manifest, targetProvider, contexts, state) =>
+      request<JsonValue>("providers.readPlan", {
+        manifest: manifest as unknown as JsonValue,
+        target_provider: targetProvider,
+        ...(contexts ? { contexts } : {}),
+        ...(state ? { state } : {}),
+      }),
+    providerImportPlan: (manifest, targetProvider, contexts) =>
+      request<JsonValue>("providers.importPlan", {
+        manifest: manifest as unknown as JsonValue,
+        target_provider: targetProvider,
+        ...(contexts ? { contexts } : {}),
+      }),
+    readProviderState: (manifest, targetProvider, contexts, state) =>
+      request<JsonValue>("providers.read", {
+        manifest: manifest as unknown as JsonValue,
+        target_provider: targetProvider,
+        contexts,
+        ...(state ? { state } : {}),
+      }),
+    importProviderState: (manifest, targetProvider, contexts) =>
+      request<JsonValue>("providers.import", {
+        manifest: manifest as unknown as JsonValue,
+        target_provider: targetProvider,
+        contexts,
+      }),
+    refreshProviderPlan: (manifest, targetProvider, contexts, state, scope) =>
+      request<JsonValue>("providers.refreshPlan", {
+        manifest: manifest as unknown as JsonValue,
+        target_provider: targetProvider,
+        contexts,
+        state,
+        ...(scope ? { scope: scope as unknown as JsonValue } : {}),
+      }),
+    applyProviderPlan: (manifest, targetProvider, contexts, confirm, scope, state) =>
+      request<JsonValue>("providers.apply", {
+        manifest: manifest as unknown as JsonValue,
+        target_provider: targetProvider,
+        contexts,
+        confirm,
+        ...(scope ? { scope: scope as unknown as JsonValue } : {}),
+        ...(state ? { state } : {}),
       }),
     importVercel: (project) => request<Manifest>("import.vercel", project),
     importSupabase: (project) => request<Manifest>("import.supabase", project),
@@ -145,11 +241,12 @@ export function createStackportClient(options: StackportClientOptions = {}): Sta
         manifest: manifest as unknown as JsonValue,
         target_provider: targetProvider,
       }),
-    plan: (manifest, targetProvider, scope) =>
+    plan: (manifest, targetProvider, scope, state) =>
       request<JsonValue>("plan.create", {
         manifest: manifest as unknown as JsonValue,
         target_provider: targetProvider,
         ...(scope ? { scope: scope as unknown as JsonValue } : {}),
+        ...(state ? { state } : {}),
       }),
     diff: (manifest, state) =>
       request<JsonValue>("state.diff", {

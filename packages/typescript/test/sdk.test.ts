@@ -13,7 +13,7 @@ test("typescript sdk calls the rust rpc engine", async () => {
   try {
     const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Manifest;
     const version = await client.version();
-    assert.equal(version.rpc_version, "2026-07-22");
+    assert.equal(version.rpc_version, "2026-07-23");
 
     const validation = await client.validate(manifest);
     assert.equal((validation as { valid: boolean }).valid, true);
@@ -57,6 +57,10 @@ test("typescript sdk calls the rust rpc engine", async () => {
       )?.api_operation?.graphql_operation,
       "serviceCreate",
     );
+    const readPlan = await client.providerReadPlan(stackManifest, "railway");
+    assert.ok((readPlan as { requests: unknown[] }).requests.length > 0);
+    const importPlan = await client.providerImportPlan(stackManifest, "railway");
+    assert.ok((importPlan as { requests: unknown[] }).requests.length > 0);
   } finally {
     client.close();
   }

@@ -34,6 +34,7 @@ pub trait ProviderAdapter {
     fn create(&self, step: &PlanStep) -> Result<String, String>;
     fn update(&self, step: &PlanStep) -> Result<String, String>;
     fn delete(&self, step: &PlanStep) -> Result<String, String>;
+    fn replace(&self, step: &PlanStep) -> Result<String, String>;
 }
 
 pub struct DryRunAdapter;
@@ -52,14 +53,13 @@ impl ProviderAdapter for DryRunAdapter {
     }
 
     fn import(&self, resource: &Resource) -> Result<StateResource, String> {
-        Ok(StateResource {
-            id: resource.id.clone(),
-            provider: resource.provider.clone(),
-            provider_id: format!("dry-run:{}", resource.id),
-            provider_resource: Some(format!("{:?}", resource.kind)),
-            fingerprint: crate::manifest::resource_fingerprint(resource),
-            secrets: vec![],
-        })
+        StateResource::from_applied(
+            resource,
+            format!("dry-run:{}", resource.id),
+            Some(format!("{:?}", resource.kind)),
+            Default::default(),
+            vec![],
+        )
     }
 
     fn plan(&self, step: &PlanStep) -> Result<String, String> {
@@ -77,6 +77,10 @@ impl ProviderAdapter for DryRunAdapter {
     fn delete(&self, step: &PlanStep) -> Result<String, String> {
         Ok(format!("dry-run delete for `{}`", step.resource_id))
     }
+
+    fn replace(&self, step: &PlanStep) -> Result<String, String> {
+        Ok(format!("dry-run replace for `{}`", step.resource_id))
+    }
 }
 
 pub fn apply_plan<A: ProviderAdapter>(
@@ -88,22 +92,18 @@ pub fn apply_plan<A: ProviderAdapter>(
         .steps
         .iter()
         .map(|step| match step.action {
-            PlanAction::Create if dry_run => ApplyStepResult {
+            PlanAction::Create if dry_run => planned_result(step, adapter.create(step)),
+            PlanAction::Update if dry_run => planned_result(step, adapter.update(step)),
+            PlanAction::Delete if dry_run => planned_result(step, adapter.delete(step)),
+            PlanAction::Replace if dry_run => planned_result(step, adapter.replace(step)),
+            PlanAction::Create => applied_result(step, adapter.create(step)),
+            PlanAction::Update => applied_result(step, adapter.update(step)),
+            PlanAction::Delete => applied_result(step, adapter.delete(step)),
+            PlanAction::Replace => applied_result(step, adapter.replace(step)),
+            PlanAction::Noop => ApplyStepResult {
                 resource_id: step.resource_id.clone(),
-                status: ApplyStatus::Planned,
-                message: adapter.create(step).unwrap_or_else(|err| err),
-            },
-            PlanAction::Create => match adapter.create(step) {
-                Ok(message) => ApplyStepResult {
-                    resource_id: step.resource_id.clone(),
-                    status: ApplyStatus::Applied,
-                    message,
-                },
-                Err(message) => ApplyStepResult {
-                    resource_id: step.resource_id.clone(),
-                    status: ApplyStatus::Failed,
-                    message,
-                },
+                status: ApplyStatus::Skipped,
+                message: step.reason.clone(),
             },
             PlanAction::Manual | PlanAction::Unsupported => ApplyStepResult {
                 resource_id: step.resource_id.clone(),
@@ -114,4 +114,34 @@ pub fn apply_plan<A: ProviderAdapter>(
         .collect();
 
     ApplyReport { dry_run, results }
+}
+
+fn planned_result(step: &PlanStep, result: Result<String, String>) -> ApplyStepResult {
+    match result {
+        Ok(message) => ApplyStepResult {
+            resource_id: step.resource_id.clone(),
+            status: ApplyStatus::Planned,
+            message,
+        },
+        Err(message) => ApplyStepResult {
+            resource_id: step.resource_id.clone(),
+            status: ApplyStatus::Failed,
+            message,
+        },
+    }
+}
+
+fn applied_result(step: &PlanStep, result: Result<String, String>) -> ApplyStepResult {
+    match result {
+        Ok(message) => ApplyStepResult {
+            resource_id: step.resource_id.clone(),
+            status: ApplyStatus::Applied,
+            message,
+        },
+        Err(message) => ApplyStepResult {
+            resource_id: step.resource_id.clone(),
+            status: ApplyStatus::Failed,
+            message,
+        },
+    }
 }

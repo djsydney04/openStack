@@ -18,7 +18,7 @@ class StackportSdkTest(unittest.TestCase):
         try:
             manifest = json.loads((ROOT / "fixtures/manifest.basic.json").read_text())
             version = client.version()
-            self.assertEqual(version["rpc_version"], "2026-07-22")
+            self.assertEqual(version["rpc_version"], "2026-07-23")
             self.assertIs(client.validate(manifest)["valid"], True)
             plan = client.plan(
                 manifest,
@@ -71,6 +71,10 @@ class StackportSdkTest(unittest.TestCase):
                 web_step["api_operation"]["graphql_operation"],
                 "serviceCreate",
             )
+            read_plan = client.provider_read_plan(stack_manifest, "railway")
+            self.assertGreater(len(read_plan["requests"]), 0)
+            import_plan = client.provider_import_plan(stack_manifest, "railway")
+            self.assertGreater(len(import_plan["requests"]), 0)
         finally:
             client.close()
 

@@ -1,4 +1,4 @@
-use crate::manifest::{validate_manifest, Capability, Manifest, ResourceKind};
+use crate::manifest::{validate_manifest, Capability, Manifest, Resource, ResourceKind};
 use crate::providers::provider_definition;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -43,31 +43,14 @@ pub fn analyze_portability(
     let mut resources = Vec::new();
 
     for resource in &manifest.resources {
-        let mut capabilities = resource.capabilities.clone();
-        capabilities.extend(default_resource_capabilities(&resource.kind));
-        capabilities.sort_by_key(|capability| format!("{capability:?}"));
-        capabilities.dedup();
+        let compatibility = analyze_resource(resource, &supported);
+        let capabilities = resource_capabilities(resource);
 
         for capability in &capabilities {
             required.insert(capability.clone());
         }
 
-        let missing = capabilities
-            .iter()
-            .filter(|capability| !supported.contains(*capability))
-            .cloned()
-            .collect::<Vec<_>>();
-        let notes = if missing.is_empty() {
-            vec!["direct migration supported".to_string()]
-        } else {
-            vec!["requires manual mapping or alternate provider".to_string()]
-        };
-        resources.push(ResourceCompatibility {
-            resource_id: resource.id.clone(),
-            portable: missing.is_empty(),
-            missing_capabilities: missing,
-            notes,
-        });
+        resources.push(compatibility);
     }
 
     let portable = resources.iter().all(|resource| resource.portable);
@@ -83,6 +66,40 @@ pub fn analyze_portability(
         required_capabilities,
         supported_capabilities,
     })
+}
+
+pub fn analyze_resource_for_provider(resource: &Resource, provider: &str) -> ResourceCompatibility {
+    let supported = default_capabilities(provider)
+        .capabilities
+        .into_iter()
+        .collect::<HashSet<_>>();
+    analyze_resource(resource, &supported)
+}
+
+fn analyze_resource(resource: &Resource, supported: &HashSet<Capability>) -> ResourceCompatibility {
+    let missing_capabilities = resource_capabilities(resource)
+        .into_iter()
+        .filter(|capability| !supported.contains(capability))
+        .collect::<Vec<_>>();
+    let notes = if missing_capabilities.is_empty() {
+        vec!["direct migration supported".to_string()]
+    } else {
+        vec!["requires manual mapping or alternate provider".to_string()]
+    };
+    ResourceCompatibility {
+        resource_id: resource.id.clone(),
+        portable: missing_capabilities.is_empty(),
+        missing_capabilities,
+        notes,
+    }
+}
+
+fn resource_capabilities(resource: &Resource) -> Vec<Capability> {
+    let mut capabilities = resource.capabilities.clone();
+    capabilities.extend(default_resource_capabilities(&resource.kind));
+    capabilities.sort_by_key(|capability| format!("{capability:?}"));
+    capabilities.dedup();
+    capabilities
 }
 
 pub fn default_capabilities(provider: &str) -> ProviderCapabilities {
@@ -156,8 +173,12 @@ pub fn default_capabilities(provider: &str) -> ProviderCapabilities {
 
 fn default_resource_capabilities(kind: &ResourceKind) -> Vec<Capability> {
     match kind {
+        ResourceKind::Project | ResourceKind::Environment => vec![],
         ResourceKind::WebService | ResourceKind::StaticSite => vec![Capability::Build],
+        ResourceKind::Build | ResourceKind::DeployHook => vec![Capability::Build],
         ResourceKind::Database => vec![Capability::Postgres],
+        ResourceKind::DatabaseBranch | ResourceKind::DatabaseRole => vec![Capability::Postgres],
+        ResourceKind::ConnectionString => vec![Capability::Postgres, Capability::Secrets],
         ResourceKind::Auth => vec![Capability::Auth],
         ResourceKind::StorageBucket => vec![Capability::ObjectStorage],
         ResourceKind::Function => vec![Capability::ServerlessFunctions],

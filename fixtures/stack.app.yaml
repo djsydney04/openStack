@@ -15,6 +15,9 @@ targets:
     provider: railway
     region: us-west1
     environment: production
+    config:
+      project_id: project-demo
+      environment_id: environment-production
 
 services:
   web:
@@ -49,4 +52,3 @@ secrets:
   DATABASE_URL:
     from: neon:primary:DATABASE_URL
     description: Connection string for the primary Postgres database
-

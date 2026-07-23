@@ -25,6 +25,11 @@ cargo run -q -p stackport-cli -- stack validate fixtures/stack.app.yaml --target
 cargo run -q -p stackport-cli -- stack manifest fixtures/stack.app.yaml --target production
 cargo run -q -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production
 cargo run -q -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production --provider-details
+cargo run -q -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production --provider-requests
+cargo run -q -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production --refresh
+cargo run -q -p stackport-cli -- stack read fixtures/stack.app.yaml --target production
+cargo run -q -p stackport-cli -- stack import fixtures/stack.app.yaml --target production
+cargo run -q -p stackport-cli -- stack apply fixtures/stack.app.yaml --target production
 cargo run -q -p stackport-cli -- providers show railway
 ```
 
@@ -37,7 +42,9 @@ Expected behavior:
 - Partial Render plan includes only `web` and warns that `database` is outside scope.
 - Diff reports update/create/delete against the stale fixture state.
 - Dry-run apply returns a planned create for `web`.
-- RPC version returns `rpc_version: "2026-07-22"`.
+- RPC version returns `rpc_version: "2026-07-23"`.
 - Stack YAML validation succeeds and target-specific manifest generation maps `service:web` to Railway for production.
 - Provider details show the adapter contract, auth methods, resource lifecycle support, state ID format, and no plaintext secret storage.
 - Provider details include docs-backed API operation templates for the provider adapter.
+- Provider request, read, import, and unapproved apply commands print plans without contacting a provider or exposing credentials.
+- The Rust integration tests bind a local HTTP provider, verify the actual auth/body sent across the socket, and prove returned secret fields are redacted.

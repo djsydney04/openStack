@@ -40,9 +40,16 @@ pub struct Resource {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceKind {
+    Project,
+    Environment,
     WebService,
     StaticSite,
+    Build,
+    DeployHook,
     Database,
+    DatabaseBranch,
+    DatabaseRole,
+    ConnectionString,
     Auth,
     StorageBucket,
     Function,

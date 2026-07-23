@@ -3,13 +3,20 @@ use crate::apply::{apply_plan, DryRunAdapter};
 use crate::diff::diff_state;
 use crate::importers::{import_supabase, import_vercel, SupabaseProject, VercelProject};
 use crate::manifest::{validate_manifest, Manifest, MigrationScope};
-use crate::planner::{create_plan, MigrationPlan};
+use crate::planner::{create_plan_with_state, MigrationPlan};
+use crate::provider_runtime::{
+    apply_provider_requests, build_provider_import_plan, build_provider_read_plan,
+    build_provider_request_plan, compare_provider_observations, execute_provider_observations,
+    reconcile_plan_with_observations, HttpProviderTransport, ProcessEnvironment, ProviderContext,
+    ProviderDriftStatus,
+};
 use crate::providers::{provider_definition, provider_execution_plan, provider_registry};
 use crate::stack_spec::{stack_spec_to_manifest, validate_stack_spec, StackSpec};
 use crate::state::StackState;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-pub const STACKPORT_RPC_VERSION: &str = "2026-07-22";
+pub const STACKPORT_RPC_VERSION: &str = "2026-07-23";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct JsonRpcRequest {
@@ -50,6 +57,10 @@ pub struct PlanParams {
     pub target_provider: String,
     #[serde(default)]
     pub scope: Option<MigrationScope>,
+    #[serde(default)]
+    pub state: Option<StackState>,
+    #[serde(default)]
+    pub contexts: HashMap<String, ProviderContext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -75,6 +86,14 @@ pub struct StackSpecParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProviderParams {
     pub provider: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderApplyParams {
+    #[serde(flatten)]
+    pub plan: PlanParams,
+    #[serde(default)]
+    pub confirm: bool,
 }
 
 pub fn handle_rpc_request(request: JsonRpcRequest) -> JsonRpcResponse {
@@ -106,7 +125,14 @@ pub fn handle_rpc_request(request: JsonRpcRequest) -> JsonRpcResponse {
             })
             .and_then(to_value),
         "plan.create" => parse_params::<PlanParams>(request.params)
-            .and_then(|params| create_plan(&params.manifest, &params.target_provider, params.scope))
+            .and_then(|params| {
+                create_plan_with_state(
+                    &params.manifest,
+                    &params.target_provider,
+                    params.scope,
+                    params.state.as_ref(),
+                )
+            })
             .and_then(to_value),
         "state.diff" => parse_params::<DiffParams>(request.params)
             .and_then(|params| diff_state(&params.manifest, &params.state))
@@ -129,8 +155,149 @@ pub fn handle_rpc_request(request: JsonRpcRequest) -> JsonRpcResponse {
             .and_then(to_value),
         "providers.executionPlan" => parse_params::<PlanParams>(request.params)
             .and_then(|params| {
-                let plan = create_plan(&params.manifest, &params.target_provider, params.scope)?;
+                let plan = create_plan_with_state(
+                    &params.manifest,
+                    &params.target_provider,
+                    params.scope,
+                    params.state.as_ref(),
+                )?;
                 Ok(provider_execution_plan(&params.manifest, &plan))
+            })
+            .and_then(to_value),
+        "providers.requestPlan" => parse_params::<PlanParams>(request.params)
+            .and_then(|params| {
+                let plan = create_plan_with_state(
+                    &params.manifest,
+                    &params.target_provider,
+                    params.scope,
+                    params.state.as_ref(),
+                )?;
+                Ok(build_provider_request_plan(
+                    &params.manifest,
+                    &plan,
+                    &params.contexts,
+                ))
+            })
+            .and_then(to_value),
+        "providers.readPlan" => parse_params::<PlanParams>(request.params)
+            .map(|params| {
+                build_provider_read_plan(
+                    &params.manifest,
+                    params.state.as_ref(),
+                    &params.contexts,
+                )
+            })
+            .and_then(to_value),
+        "providers.importPlan" => parse_params::<PlanParams>(request.params)
+            .map(|params| build_provider_import_plan(&params.manifest, &params.contexts))
+            .and_then(to_value),
+        "providers.read" => parse_params::<PlanParams>(request.params)
+            .and_then(|params| {
+                let plan = build_provider_read_plan(
+                    &params.manifest,
+                    params.state.as_ref(),
+                    &params.contexts,
+                );
+                if !plan.executable {
+                    return Err(
+                        "provider read plan is not executable; resolve warnings and missing identifiers"
+                            .to_string(),
+                    );
+                }
+                Ok(execute_provider_observations(
+                    &plan,
+                    &HttpProviderTransport::default(),
+                    &ProcessEnvironment,
+                ))
+            })
+            .and_then(to_value),
+        "providers.import" => parse_params::<PlanParams>(request.params)
+            .and_then(|params| {
+                let plan = build_provider_import_plan(&params.manifest, &params.contexts);
+                if !plan.executable {
+                    return Err(
+                        "provider import plan is not executable; resolve warnings and missing identifiers"
+                            .to_string(),
+                    );
+                }
+                Ok(execute_provider_observations(
+                    &plan,
+                    &HttpProviderTransport::default(),
+                    &ProcessEnvironment,
+                ))
+            })
+            .and_then(to_value),
+        "providers.refreshPlan" => parse_params::<PlanParams>(request.params)
+            .and_then(|params| {
+                let state = params
+                    .state
+                    .as_ref()
+                    .ok_or_else(|| "providers.refreshPlan requires state".to_string())?;
+                let read_plan =
+                    build_provider_read_plan(&params.manifest, Some(state), &params.contexts);
+                if !read_plan.executable {
+                    return Err(format!(
+                        "provider refresh is not executable: {}",
+                        read_plan.warnings.join("; ")
+                    ));
+                }
+                let read = execute_provider_observations(
+                    &read_plan,
+                    &HttpProviderTransport::default(),
+                    &ProcessEnvironment,
+                );
+                let drift =
+                    compare_provider_observations(&params.manifest, Some(state), &read);
+                if drift
+                    .resources
+                    .iter()
+                    .any(|resource| resource.status == ProviderDriftStatus::ReadFailed)
+                {
+                    return Err("provider refresh failed for one or more resources".to_string());
+                }
+                let mut plan = create_plan_with_state(
+                    &params.manifest,
+                    &params.target_provider,
+                    params.scope,
+                    Some(state),
+                )?;
+                reconcile_plan_with_observations(&params.manifest, &mut plan, &drift);
+                Ok(serde_json::json!({
+                    "plan": plan,
+                    "read": read,
+                    "drift": drift,
+                }))
+            }),
+        "providers.apply" => parse_params::<ProviderApplyParams>(request.params)
+            .and_then(|params| {
+                if !params.confirm {
+                    return Err("providers.apply requires confirm=true".to_string());
+                }
+                let plan = create_plan_with_state(
+                    &params.plan.manifest,
+                    &params.plan.target_provider,
+                    params.plan.scope,
+                    params.plan.state.as_ref(),
+                )?;
+                let request_plan = build_provider_request_plan(
+                    &params.plan.manifest,
+                    &plan,
+                    &params.plan.contexts,
+                );
+                if !request_plan.executable {
+                    return Err(
+                        "provider request plan is not executable; resolve warnings and missing identifiers"
+                            .to_string(),
+                    );
+                }
+                Ok(apply_provider_requests(
+                    &params.plan.manifest,
+                    &plan,
+                    params.plan.state.as_ref(),
+                    &request_plan,
+                    &HttpProviderTransport::default(),
+                    &ProcessEnvironment,
+                ))
             })
             .and_then(to_value),
         _ => return error(request.id, -32601, "method not found"),

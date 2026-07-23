@@ -1,6 +1,6 @@
 # Stackport
 
-Stackport is a provider-neutral portability toolkit for application stacks.
+Stackport is provider-neutral infrastructure as code for application platforms.
 
 The repository is organized around one implementation of migration logic:
 
@@ -33,14 +33,29 @@ without rewriting provider-specific manifests.
 cargo run -p stackport-cli -- stack validate fixtures/stack.app.yaml --target production
 cargo run -p stackport-cli -- stack manifest fixtures/stack.app.yaml --target production
 cargo run -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production
-cargo run -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production --provider-details
+cargo run -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production --provider-requests
+cargo run -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production --refresh
+cargo run -p stackport-cli -- stack read fixtures/stack.app.yaml --target production
+cargo run -p stackport-cli -- stack import fixtures/stack.app.yaml --target production
+cargo run -p stackport-cli -- stack apply fixtures/stack.app.yaml --target production
 cargo run -p stackport-cli -- providers show railway
 ```
 
+`plan`, `read`, `import`, and `apply` print credential-free request plans by
+default. `read --execute` and `import --execute` perform read-only provider API
+calls. `apply --auto-approve` performs mutations and writes provider IDs plus
+last-applied configuration to `.stackport/state.json` atomically.
+`plan --refresh` reads resources already tracked in state and reconciles
+provider-side drift before choosing no-op, update, or manual action. Approved
+apply performs the same refresh automatically and stops if a provider read
+fails.
+
 Provider definitions are part of the product contract. Each provider declares
-auth methods, resource mappings, read/import/plan/apply/delete support, state ID
-policy, and secret handling. Vercel, Supabase, Neon, and Railway are registered
-first; Render, Fly, and Netlify can be added behind the same contract.
+auth methods, resource mappings, read/import/plan/create/update/delete support,
+state ID policy, and secret handling. The Rust runtime compiles those contracts
+into typed REST or GraphQL requests and is the only layer that resolves tokens
+or secret values. Vercel, Supabase, Neon, and Railway are registered first;
+Render, Fly, and Netlify can be added behind the same contract.
 See `docs/provider-api-contracts.md` for the docs-backed API surfaces that each
 adapter will call.
 
@@ -90,6 +105,9 @@ Each response includes either `result` or `error`.
 
 ## Security Model
 
-Stackport manifests reference secrets by name. Importers reject likely secret
-values and preserve only secret references. Apply is dry-run only until a caller
-provides a concrete provider adapter from the Rust SDK.
+Stackport manifests reference secrets by name. Request plans contain only
+environment-variable names and provider secret references. Tokens and secret
+values are resolved in memory immediately before HTTP execution; responses are
+redacted before entering serializable reports. State stores provider IDs,
+provider resource names, last-applied configuration, fingerprints, and secret
+references, never plaintext secret values or connection strings.

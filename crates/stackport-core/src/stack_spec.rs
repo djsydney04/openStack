@@ -1,7 +1,8 @@
 use crate::manifest::{
-    validate_manifest, Application, Capability, Manifest, Resource, ResourceKind, Variable,
-    MANIFEST_SCHEMA_VERSION,
+    looks_sensitive_key, validate_manifest, Application, Capability, Manifest, Resource,
+    ResourceKind, Variable, MANIFEST_SCHEMA_VERSION,
 };
+use crate::provider_runtime::ProviderContext;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -21,6 +22,8 @@ pub struct StackSpec {
     pub secrets: HashMap<String, SecretSpec>,
     #[serde(default)]
     pub domains: HashMap<String, DomainSpec>,
+    #[serde(default)]
+    pub resources: HashMap<String, GenericResourceSpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -39,6 +42,10 @@ pub struct StackTarget {
     pub region: Option<String>,
     #[serde(default)]
     pub environment: Option<String>,
+    #[serde(default)]
+    pub config: HashMap<String, String>,
+    #[serde(default)]
+    pub api_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -57,6 +64,8 @@ pub struct ServiceSpec {
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub deploy: Option<DeploySpec>,
+    #[serde(default)]
+    pub config: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -105,6 +114,10 @@ pub struct DatabaseSpec {
     pub plan: Option<String>,
     #[serde(default)]
     pub region: Option<String>,
+    #[serde(default)]
+    pub config: HashMap<String, String>,
+    #[serde(default)]
+    pub password_secret: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -120,6 +133,19 @@ pub struct DomainSpec {
     pub hostname: String,
     #[serde(default)]
     pub service: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GenericResourceSpec {
+    pub kind: ResourceKind,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub properties: serde_json::Value,
+    #[serde(default)]
+    pub config: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -149,6 +175,7 @@ pub fn validate_stack_spec(
     if spec.app.name.trim().is_empty() {
         return Err("app.name is required".to_string());
     }
+    validate_provider_config(spec)?;
 
     let manifest = stack_spec_to_manifest(spec, target)?;
     let report = validate_manifest(&manifest).map_err(|err| err.to_string())?;
@@ -169,37 +196,69 @@ pub fn stack_spec_to_manifest(spec: &StackSpec, target: Option<&str>) -> Result<
         Some(name) => resolve_target(spec, name)?.region.clone(),
         None => None,
     };
+    let target_config = match target {
+        Some(name) => resolve_target(spec, name)?.config.clone(),
+        None => HashMap::new(),
+    };
 
     let mut resources = Vec::new();
     let mut variables = HashMap::new();
 
     for (name, database) in &spec.databases {
+        let database_provider = database
+            .provider
+            .clone()
+            .or_else(|| target_provider.clone());
+        let provider_config = merged_provider_config(
+            database_provider.as_deref(),
+            target_provider.as_deref(),
+            &target_config,
+            &database.config,
+        );
+        let inherited_region = if database_provider == target_provider {
+            target_region.clone()
+        } else {
+            None
+        };
         resources.push(Resource {
             id: format!("database:{name}"),
             kind: ResourceKind::Database,
-            provider: database
-                .provider
-                .clone()
-                .or_else(|| target_provider.clone()),
+            provider: database_provider,
             capabilities: vec![Capability::Postgres],
             depends_on: vec![],
             properties: serde_json::json!({
                 "engine": database.engine.clone().unwrap_or_else(|| "postgres".to_string()),
                 "version": database.version,
                 "plan": database.plan,
-                "region": database.region.clone().or_else(|| target_region.clone()),
+                "region": database.region.clone().or(inherited_region),
+                "provider_config": provider_config,
+                "db_pass": database.password_secret.as_ref().map(|name| format!("${{secret:{name}}}")),
             }),
         });
+        if let Some(secret) = &database.password_secret {
+            variables.entry(secret.clone()).or_insert_with(|| Variable {
+                description: Some(format!("Database password for `{name}`")),
+                secret_ref: Some(format!("stack:{secret}")),
+                default: None,
+            });
+        }
     }
 
     for (name, service) in &spec.services {
         let service_provider = service.provider.clone().or_else(|| target_provider.clone());
+        let provider_config = merged_provider_config(
+            service_provider.as_deref(),
+            target_provider.as_deref(),
+            &target_config,
+            &service.config,
+        );
         let mut properties = serde_json::json!({
             "source": service.source,
             "build": service.build,
             "run": service.run,
             "deploy": service.deploy,
             "target": target,
+            "provider_config": provider_config,
         });
         properties["environment"] = service_env_properties(name, service, &mut variables);
 
@@ -256,6 +315,34 @@ pub fn stack_spec_to_manifest(spec: &StackSpec, target: Option<&str>) -> Result<
         ));
     }
 
+    for (name, generic) in &spec.resources {
+        let provider = generic.provider.clone().or_else(|| target_provider.clone());
+        let provider_config = merged_provider_config(
+            provider.as_deref(),
+            target_provider.as_deref(),
+            &target_config,
+            &generic.config,
+        );
+        let mut properties = generic.properties.clone();
+        if !properties.is_object() {
+            properties = serde_json::json!({ "value": properties });
+        }
+        properties["provider_config"] = serde_json::to_value(provider_config)
+            .map_err(|err| format!("failed to serialize provider config: {err}"))?;
+        resources.push(Resource {
+            id: if name.contains(':') {
+                name.clone()
+            } else {
+                format!("{}:{name}", resource_kind_name(&generic.kind))
+            },
+            kind: generic.kind.clone(),
+            provider,
+            capabilities: vec![],
+            depends_on: generic.depends_on.clone(),
+            properties,
+        });
+    }
+
     Ok(Manifest {
         schema_version: MANIFEST_SCHEMA_VERSION.to_string(),
         application: Application {
@@ -268,10 +355,91 @@ pub fn stack_spec_to_manifest(spec: &StackSpec, target: Option<&str>) -> Result<
     })
 }
 
+pub fn provider_contexts_for_target(
+    spec: &StackSpec,
+    target: &str,
+) -> Result<HashMap<String, ProviderContext>, String> {
+    let target = resolve_target(spec, target)?;
+    Ok([(
+        target.provider.clone(),
+        ProviderContext {
+            identifiers: target.config.clone(),
+            base_url: target.api_url.clone(),
+        },
+    )]
+    .into_iter()
+    .collect())
+}
+
 fn resolve_target<'a>(spec: &'a StackSpec, name: &str) -> Result<&'a StackTarget, String> {
     spec.targets
         .get(name)
         .ok_or_else(|| format!("target `{name}` is not defined"))
+}
+
+fn merged_provider_config(
+    resource_provider: Option<&str>,
+    target_provider: Option<&str>,
+    target_config: &HashMap<String, String>,
+    resource_config: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut config = if resource_provider == target_provider {
+        target_config.clone()
+    } else {
+        HashMap::new()
+    };
+    config.extend(resource_config.clone());
+    config
+}
+
+fn validate_provider_config(spec: &StackSpec) -> Result<(), String> {
+    for (location, config) in spec
+        .targets
+        .iter()
+        .map(|(name, target)| (format!("targets.{name}.config"), &target.config))
+        .chain(
+            spec.services
+                .iter()
+                .map(|(name, service)| (format!("services.{name}.config"), &service.config)),
+        )
+        .chain(
+            spec.databases
+                .iter()
+                .map(|(name, database)| (format!("databases.{name}.config"), &database.config)),
+        )
+        .chain(
+            spec.resources
+                .iter()
+                .map(|(name, resource)| (format!("resources.{name}.config"), &resource.config)),
+        )
+    {
+        if let Some(key) = config.keys().find(|key| looks_sensitive_key(key)) {
+            return Err(format!(
+                "{location}.{key} looks like a secret; use a secret reference instead"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn resource_kind_name(kind: &ResourceKind) -> &'static str {
+    match kind {
+        ResourceKind::Project => "project",
+        ResourceKind::Environment => "environment",
+        ResourceKind::WebService => "service",
+        ResourceKind::StaticSite => "site",
+        ResourceKind::Build => "build",
+        ResourceKind::DeployHook => "deploy_hook",
+        ResourceKind::Database => "database",
+        ResourceKind::DatabaseBranch => "branch",
+        ResourceKind::DatabaseRole => "role",
+        ResourceKind::ConnectionString => "connection_string",
+        ResourceKind::Auth => "auth",
+        ResourceKind::StorageBucket => "bucket",
+        ResourceKind::Function => "function",
+        ResourceKind::Secret => "secret",
+        ResourceKind::Domain => "domain",
+    }
 }
 
 fn service_env_properties(
