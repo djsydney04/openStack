@@ -1,0 +1,21 @@
+[workspace]
+members = [
+  "crates/stackport-core",
+  "crates/stackport-cli",
+  "crates/stackport-sdk",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "git@github.com:djsydney04/openStack.git"
+
+[workspace.dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "multipart", "rustls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2"

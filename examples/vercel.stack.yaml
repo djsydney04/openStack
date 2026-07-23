@@ -1,0 +1,30 @@
+version: stackport/app/v1alpha1
+app:
+  name: stackport-vercel-example
+  description: Vercel project, environment variables, and custom domain
+
+targets:
+  production:
+    provider: vercel
+    environment: production
+
+services:
+  web:
+    source:
+      repository: djsydney04/openStack
+    build:
+      framework: nextjs
+      command: npm run build
+      output: .next
+    env:
+      API_BASE_URL: https://api.example.com
+      SESSION_SECRET:
+        secret: SESSION_SECRET
+    deploy:
+      domains:
+        - app.example.com
+
+secrets:
+  SESSION_SECRET:
+    from: env:SESSION_SECRET
+    description: Runtime session signing secret

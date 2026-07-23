@@ -1,0 +1,9 @@
+{
+  "project_ref": "abc123",
+  "name": "demo-platform",
+  "database": true,
+  "auth": true,
+  "storage_buckets": ["avatars", "uploads"],
+  "edge_functions": ["webhook"]
+}
+

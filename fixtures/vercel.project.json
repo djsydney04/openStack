@@ -1,0 +1,10 @@
+{
+  "name": "demo-next",
+  "framework": "nextjs",
+  "domains": ["demo.example.com"],
+  "environment": [
+    { "key": "DATABASE_URL", "target": "production" },
+    { "key": "API_TOKEN", "target": "production" }
+  ]
+}
+
