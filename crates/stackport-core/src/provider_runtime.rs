@@ -219,7 +219,17 @@ impl ProviderTransport for HttpProviderTransport {
             builder = builder.header(name, value);
         }
         if let Some(body) = request.body() {
-            builder = builder.json(body);
+            if request.provider() == "supabase"
+                && request.provider_resource() == "edge-function"
+                && matches!(
+                    request.operation(),
+                    ProviderOperation::ApplyCreate | ProviderOperation::ApplyUpdate
+                )
+            {
+                builder = builder.multipart(supabase_edge_function_form(body)?);
+            } else {
+                builder = builder.json(body);
+            }
         }
 
         let response = builder
@@ -727,7 +737,25 @@ fn compile_request(
         .filter(|identifier| !has_identifier(&identifiers, identifier))
         .cloned()
         .collect::<Vec<_>>();
-    let url = request_url(&definition, operation, &context, &identifiers);
+    let mut url = request_url(&definition, operation, &context, &identifiers);
+    if provider_name == "supabase"
+        && provider_resource == "edge-function"
+        && matches!(action, PlanAction::Create | PlanAction::Update)
+    {
+        if let Some(slug) = resource
+            .and_then(|resource| resource.properties.get("slug"))
+            .and_then(Value::as_str)
+        {
+            if !slug.chars().all(|character| {
+                character.is_ascii_alphanumeric() || character == '-' || character == '_'
+            }) {
+                unresolved_identifiers.push("valid function slug".to_string());
+            } else {
+                url.push_str("?slug=");
+                url.push_str(slug);
+            }
+        }
+    }
     let body = request_body(
         provider_name,
         &provider_resource,
@@ -1951,8 +1979,87 @@ fn supabase_body(
             copy_property(resource, "db_pass", &mut body, "db_pass");
             Some(Value::Object(body))
         }
+        "edge-function" => {
+            let mut metadata = Map::new();
+            for key in [
+                "name",
+                "entrypoint_path",
+                "import_map_path",
+                "verify_jwt",
+                "static_patterns",
+            ] {
+                copy_property(resource, key, &mut metadata, key);
+            }
+            if !metadata.contains_key("name") {
+                copy_property(resource, "slug", &mut metadata, "name");
+            }
+            let files = resource
+                .properties
+                .get("files")
+                .cloned()
+                .or_else(|| {
+                    resource
+                        .properties
+                        .get("source_path")
+                        .cloned()
+                        .map(|path| Value::Array(vec![path]))
+                })
+                .unwrap_or_else(|| Value::Array(vec![]));
+            Some(serde_json::json!({
+                "metadata": metadata,
+                "files": files,
+            }))
+        }
         _ => Some(resource.properties.clone()),
     }
+}
+
+fn supabase_edge_function_form(body: &Value) -> Result<reqwest::blocking::multipart::Form, String> {
+    let metadata = body
+        .get("metadata")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Supabase Edge Function request requires metadata".to_string())?;
+    let mut form = reqwest::blocking::multipart::Form::new()
+        .text("metadata", Value::Object(metadata.clone()).to_string());
+    for file in body
+        .get("files")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let (path, file_name) = match file {
+            Value::String(path) => (path.as_str(), None),
+            Value::Object(file) => {
+                let path = file
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "Edge Function file object requires `path`".to_string())?;
+                (path, file.get("name").and_then(Value::as_str))
+            }
+            _ => {
+                return Err(
+                    "Edge Function `files` entries must be paths or {path, name} objects"
+                        .to_string(),
+                )
+            }
+        };
+        let bytes = std::fs::read(path)
+            .map_err(|err| format!("failed to read Edge Function source `{path}`: {err}"))?;
+        let file_name = file_name
+            .map(str::to_string)
+            .or_else(|| {
+                std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(str::to_string)
+            })
+            .ok_or_else(|| format!("Edge Function source `{path}` has no file name"))?;
+        form = form.part(
+            "file",
+            reqwest::blocking::multipart::Part::bytes(bytes).file_name(file_name),
+        );
+    }
+    Ok(form)
 }
 
 fn neon_body(

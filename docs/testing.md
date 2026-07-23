@@ -47,4 +47,4 @@ Expected behavior:
 - Provider details show the adapter contract, auth methods, resource lifecycle support, state ID format, and no plaintext secret storage.
 - Provider details include docs-backed API operation templates for the provider adapter.
 - Provider request, read, import, and unapproved apply commands print plans without contacting a provider or exposing credentials.
-- The Rust integration tests bind a local HTTP provider, verify the actual auth/body sent across the socket, and prove returned secret fields are redacted.
+- The Rust integration tests bind local HTTP providers, verify JSON and Supabase multipart auth/body bytes across the socket, and prove returned secret fields are redacted.

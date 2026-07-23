@@ -50,6 +50,11 @@ The runtime has three boundaries:
   - `https://supabase.com/docs/reference/api/getting-started`
   - `https://supabase.com/changelog/33720-deploy-and-update-edge-functions-using-the-management-api`
 
+Edge Function create/update requests use the Management API's required
+`multipart/form-data` encoding. The resource supplies `slug`, metadata such as
+`entrypoint_path`, and a `files` array of local paths (or `{ path, name }`
+objects); source bytes are read only at execution time.
+
 ## Neon
 
 - Protocol: REST

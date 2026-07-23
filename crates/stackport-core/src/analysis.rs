@@ -95,8 +95,11 @@ fn analyze_resource(resource: &Resource, supported: &HashSet<Capability>) -> Res
 }
 
 fn resource_capabilities(resource: &Resource) -> Vec<Capability> {
-    let mut capabilities = resource.capabilities.clone();
-    capabilities.extend(default_resource_capabilities(&resource.kind));
+    let mut capabilities = if resource.capabilities.is_empty() {
+        default_resource_capabilities(&resource.kind)
+    } else {
+        resource.capabilities.clone()
+    };
     capabilities.sort_by_key(|capability| format!("{capability:?}"));
     capabilities.dedup();
     capabilities

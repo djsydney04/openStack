@@ -13,9 +13,9 @@ use stackport_core::provider_runtime::{
     apply_provider_requests, build_provider_import_plan, build_provider_read_plan,
     build_provider_request_plan, compare_provider_observations, execute_provider_observations,
     execute_provider_requests, reconcile_plan_with_observations, HttpProviderTransport,
-    ProviderAuthHeader, ProviderAuthRequirement, ProviderExecutionReport, ProviderRequest,
-    ProviderRequestPlan, ProviderRequestResult, ProviderRequestStatus, ProviderTransport,
-    ProviderTransportResponse, ResolvedProviderRequest, RuntimeValueResolver,
+    ProviderAuthHeader, ProviderAuthRequirement, ProviderContext, ProviderExecutionReport,
+    ProviderRequest, ProviderRequestPlan, ProviderRequestResult, ProviderRequestStatus,
+    ProviderTransport, ProviderTransportResponse, ResolvedProviderRequest, RuntimeValueResolver,
 };
 use stackport_core::providers::{
     provider_execution_plan, provider_registry, HttpMethod, ProviderOperation,
@@ -811,6 +811,98 @@ fn http_read_redacts_provider_secret_fields() {
 }
 
 #[test]
+fn supabase_edge_function_uses_real_multipart_upload() {
+    let source_path =
+        std::env::temp_dir().join(format!("stackport-edge-function-{}.ts", std::process::id()));
+    std::fs::write(&source_path, "Deno.serve(() => new Response('stackport'));")
+        .expect("write Edge Function fixture");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock provider");
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept provider request");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let request = read_http_request(&mut stream);
+        assert!(request
+            .starts_with("POST /v1/projects/project-ref/functions/deploy?slug=hello HTTP/1.1"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("content-type: multipart/form-data; boundary="));
+        assert!(request.contains("name=\"metadata\""));
+        assert!(request.contains("\"entrypoint_path\":\"index.ts\""));
+        assert!(request.contains("stackport-edge-function-"));
+        assert!(request.contains("Deno.serve(() => new Response('stackport'));"));
+        let response = r#"{"id":"fn_123","slug":"hello"}"#;
+        stream
+            .write_all(
+                format!(
+                    "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response.len(),
+                    response
+                )
+                .as_bytes(),
+            )
+            .expect("write provider response");
+    });
+    let manifest = Manifest {
+        schema_version: MANIFEST_SCHEMA_VERSION.to_string(),
+        application: Application {
+            name: "demo".to_string(),
+            description: None,
+            tags: vec![],
+        },
+        resources: vec![Resource {
+            id: "function:hello".to_string(),
+            kind: ResourceKind::Function,
+            provider: Some("supabase".to_string()),
+            capabilities: vec![Capability::EdgeFunctions],
+            depends_on: vec![],
+            properties: serde_json::json!({
+                "slug": "hello",
+                "name": "Hello",
+                "entrypoint_path": "index.ts",
+                "files": [source_path.to_string_lossy()]
+            }),
+        }],
+        variables: HashMap::new(),
+    };
+    let migration_plan = create_plan(&manifest, "supabase", None).unwrap();
+    let contexts = [(
+        "supabase".to_string(),
+        ProviderContext {
+            identifiers: [("ref".to_string(), "project-ref".to_string())]
+                .into_iter()
+                .collect(),
+            base_url: Some(format!("http://{address}")),
+        },
+    )]
+    .into_iter()
+    .collect();
+    let requests = build_provider_request_plan(&manifest, &migration_plan, &contexts);
+    assert!(requests.executable, "{:?}", requests.warnings);
+    assert!(requests.requests[0].url.ends_with("?slug=hello"));
+    let resolver = TestResolver {
+        environment: [(
+            "SUPABASE_ACCESS_TOKEN".to_string(),
+            "supabase-token".to_string(),
+        )]
+        .into_iter()
+        .collect(),
+    };
+
+    let report = execute_provider_requests(
+        &requests,
+        &HttpProviderTransport::new(Duration::from_secs(2)).unwrap(),
+        &resolver,
+    );
+    server.join().expect("mock provider should finish");
+    std::fs::remove_file(source_path).expect("remove Edge Function fixture");
+    assert_eq!(report.results[0].status, ProviderRequestStatus::Applied);
+    assert_eq!(report.results[0].provider_id.as_deref(), Some("fn_123"));
+}
+
+#[test]
 fn provider_observations_continue_after_an_independent_read_fails() {
     let web = Resource {
         id: "web:a".to_string(),
@@ -1240,4 +1332,38 @@ fn state_resource_for(resource: &Resource, provider_id: &str) -> StateResource {
         last_applied: None,
         secrets: vec![],
     }
+}
+
+fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+    let mut request = Vec::new();
+    let mut expected_length = None;
+    loop {
+        let mut buffer = [0_u8; 4096];
+        let bytes = stream.read(&mut buffer).expect("read provider request");
+        assert!(bytes > 0, "provider request closed before body completed");
+        request.extend_from_slice(&buffer[..bytes]);
+        if expected_length.is_none() {
+            if let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                let headers = String::from_utf8_lossy(&request[..header_end]);
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.split_once(':').and_then(|(name, value)| {
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                    })
+                    .unwrap_or(0);
+                expected_length = Some(header_end + 4 + content_length);
+            }
+        }
+        if expected_length
+            .map(|expected| request.len() >= expected)
+            .unwrap_or(false)
+        {
+            break;
+        }
+    }
+    String::from_utf8(request).expect("provider request should be UTF-8")
 }
