@@ -141,6 +141,8 @@ pub struct GenericResourceSpec {
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default)]
+    pub capabilities: Vec<Capability>,
+    #[serde(default)]
     pub depends_on: Vec<String>,
     #[serde(default)]
     pub properties: serde_json::Value,
@@ -204,7 +206,10 @@ pub fn stack_spec_to_manifest(spec: &StackSpec, target: Option<&str>) -> Result<
     let mut resources = Vec::new();
     let mut variables = HashMap::new();
 
-    for (name, database) in &spec.databases {
+    let mut database_names = spec.databases.keys().collect::<Vec<_>>();
+    database_names.sort();
+    for name in database_names {
+        let database = &spec.databases[name];
         let database_provider = database
             .provider
             .clone()
@@ -244,7 +249,10 @@ pub fn stack_spec_to_manifest(spec: &StackSpec, target: Option<&str>) -> Result<
         }
     }
 
-    for (name, service) in &spec.services {
+    let mut service_names = spec.services.keys().collect::<Vec<_>>();
+    service_names.sort();
+    for name in service_names {
+        let service = &spec.services[name];
         let service_provider = service.provider.clone().or_else(|| target_provider.clone());
         let provider_config = merged_provider_config(
             service_provider.as_deref(),
@@ -287,7 +295,10 @@ pub fn stack_spec_to_manifest(spec: &StackSpec, target: Option<&str>) -> Result<
         }
     }
 
-    for (name, secret) in &spec.secrets {
+    let mut secret_names = spec.secrets.keys().collect::<Vec<_>>();
+    secret_names.sort();
+    for name in secret_names {
+        let secret = &spec.secrets[name];
         variables.insert(
             name.clone(),
             Variable {
@@ -301,7 +312,10 @@ pub fn stack_spec_to_manifest(spec: &StackSpec, target: Option<&str>) -> Result<
         );
     }
 
-    for (name, domain) in &spec.domains {
+    let mut domain_names = spec.domains.keys().collect::<Vec<_>>();
+    domain_names.sort();
+    for name in domain_names {
+        let domain = &spec.domains[name];
         let service_id = domain
             .service
             .as_ref()
@@ -315,7 +329,10 @@ pub fn stack_spec_to_manifest(spec: &StackSpec, target: Option<&str>) -> Result<
         ));
     }
 
-    for (name, generic) in &spec.resources {
+    let mut resource_names = spec.resources.keys().collect::<Vec<_>>();
+    resource_names.sort();
+    for name in resource_names {
+        let generic = &spec.resources[name];
         let provider = generic.provider.clone().or_else(|| target_provider.clone());
         let provider_config = merged_provider_config(
             provider.as_deref(),
@@ -337,7 +354,7 @@ pub fn stack_spec_to_manifest(spec: &StackSpec, target: Option<&str>) -> Result<
             },
             kind: generic.kind.clone(),
             provider,
-            capabilities: vec![],
+            capabilities: generic.capabilities.clone(),
             depends_on: generic.depends_on.clone(),
             properties,
         });

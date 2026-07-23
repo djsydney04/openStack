@@ -1,113 +1,107 @@
 # Stackport
 
-Stackport is provider-neutral infrastructure as code for application platforms.
+Stackport is simple infrastructure as code for application platforms. A single
+YAML file describes services, databases, environments, domains, functions, and
+secrets. The Rust engine turns that desired state into an ordered plan, calls
+provider APIs, and records enough state to update or destroy the resources later.
 
-The repository is organized around one implementation of migration logic:
-
-- `crates/stackport-core`: Rust core engine and native Rust SDK surface.
-- `crates/stackport-cli`: CLI and versioned subprocess JSON-RPC server.
-- `packages/typescript`: TypeScript SDK that calls the CLI RPC protocol.
-- `packages/python`: Python SDK that calls the CLI RPC protocol.
-
-The TypeScript and Python SDKs intentionally do not reimplement Stackport's
-graph, validation, analysis, planning, diffing, or apply logic. They launch the
-Rust CLI as a subprocess and exchange versioned JSON-RPC messages.
+The current adapters are Vercel, Supabase, Neon, and Railway.
 
 ## Quick Start
 
 ```sh
-cargo run -p stackport-cli -- validate fixtures/manifest.basic.json
-cargo run -p stackport-cli -- import vercel fixtures/vercel.project.json
-cargo run -p stackport-cli -- analyze fixtures/manifest.basic.json --target render
-cargo run -p stackport-cli -- plan fixtures/manifest.basic.json --target render
+cargo build --workspace
+target/debug/stackport stack validate examples/railway.stack.yaml --target production
+target/debug/stackport stack plan examples/railway.stack.yaml --target production
+target/debug/stackport stack plan examples/railway.stack.yaml --target production --provider-requests
 ```
 
-## App-Layer IaC YAML
-
-Stackport also supports a simple YAML authoring format for app-layer
-infrastructure. The YAML describes services, databases, secrets, domains, and
-deployment targets. Changing the selected target changes deployment details
-without rewriting provider-specific manifests.
+Planning is credential-free and never contacts a provider. To apply a plan:
 
 ```sh
-cargo run -p stackport-cli -- stack validate fixtures/stack.app.yaml --target production
-cargo run -p stackport-cli -- stack manifest fixtures/stack.app.yaml --target production
-cargo run -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production
-cargo run -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production --provider-requests
-cargo run -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production --refresh
-cargo run -p stackport-cli -- stack read fixtures/stack.app.yaml --target production
-cargo run -p stackport-cli -- stack import fixtures/stack.app.yaml --target production
-cargo run -p stackport-cli -- stack apply fixtures/stack.app.yaml --target production
-cargo run -p stackport-cli -- providers show railway
+export RAILWAY_TOKEN=...
+export API_TOKEN=...
+export SESSION_SECRET=...
+target/debug/stackport providers doctor railway --execute
+target/debug/stackport stack apply examples/railway.stack.yaml --target production --auto-approve
 ```
 
-`plan`, `read`, `import`, and `apply` print credential-free request plans by
-default. `read --execute` and `import --execute` perform read-only provider API
-calls. `apply --auto-approve` performs mutations and writes provider IDs plus
-last-applied configuration to `.stackport/state.json` atomically.
-`plan --refresh` reads resources already tracked in state and reconciles
-provider-side drift before choosing no-op, update, or manual action. Approved
-apply performs the same refresh automatically and stops if a provider read
-fails.
+Approved apply writes `.stackport/state.json`. Commit the YAML, but do not
+commit the state file unless your team has explicitly chosen Git as its state
+backend.
 
-Provider definitions are part of the product contract. Each provider declares
-auth methods, resource mappings, read/import/plan/create/update/delete support,
-state ID policy, and secret handling. The Rust runtime compiles those contracts
-into typed REST or GraphQL requests and is the only layer that resolves tokens
-or secret values. Vercel, Supabase, Neon, and Railway are registered first;
-Render, Fly, and Netlify can be added behind the same contract.
-See `docs/provider-api-contracts.md` for the docs-backed API surfaces that each
-adapter will call.
-
-Example:
+## The YAML Model
 
 ```yaml
 version: stackport/app/v1alpha1
 app:
-  name: demo-stack
+  name: my-app
+
 targets:
   preview:
     provider: vercel
   production:
     provider: railway
+
 services:
   web:
+    source:
+      repository: owner/repository
     build:
-      framework: nextjs
       command: npm run build
+    run:
+      command: npm start
     env:
       DATABASE_URL:
         secret: DATABASE_URL
+
 databases:
   primary:
     provider: neon
     engine: postgres
+
 secrets:
   DATABASE_URL:
     from: neon:primary:DATABASE_URL
 ```
 
-## RPC
+Dependencies are explicit, plans are topologically ordered, and dependency IDs
+returned by one API call are passed to later calls in memory. Secret values are
+resolved only at the HTTP boundary and are not serialized into plans, reports,
+or state.
 
-Start a line-delimited JSON-RPC subprocess:
+Complete examples:
 
-```sh
-cargo run -p stackport-cli -- rpc
-```
+- [`examples/vercel.stack.yaml`](examples/vercel.stack.yaml)
+- [`examples/supabase.stack.yaml`](examples/supabase.stack.yaml)
+- [`examples/neon.stack.yaml`](examples/neon.stack.yaml)
+- [`examples/railway.stack.yaml`](examples/railway.stack.yaml)
 
-Each line is a request:
+## Provider Coverage
 
-```json
-{"jsonrpc":"2.0","id":"1","method":"stackport.version","params":{}}
-```
+| Provider | Executable resources | Explicit limits |
+| --- | --- | --- |
+| Vercel | projects/services, environment variables, domains, deployments | deploy hooks remain manual |
+| Supabase | projects/databases, Auth config, Storage buckets, Edge Functions, project secrets | Auth deletion is not exposed; Storage uses a service-role key |
+| Neon | projects/databases, branches, roles | role update and connection-string creation are not lifecycle operations |
+| Railway | projects, environments, services, variables, domains | Railway Postgres template deployment remains manual |
 
-Each response includes either `result` or `error`.
+`providers show <name>` returns the machine-readable resource, lifecycle, auth,
+API, state, and secret contract for an adapter.
 
-## Security Model
+## Architecture
 
-Stackport manifests reference secrets by name. Request plans contain only
-environment-variable names and provider secret references. Tokens and secret
-values are resolved in memory immediately before HTTP execution; responses are
-redacted before entering serializable reports. State stores provider IDs,
-provider resource names, last-applied configuration, fingerprints, and secret
-references, never plaintext secret values or connection strings.
+- `crates/stackport-core`: graph validation, planning, provider contracts,
+  request compilation, HTTP execution, drift, state, and JSON-RPC handlers.
+- `crates/stackport-cli`: human CLI and line-delimited JSON-RPC subprocess.
+- `crates/stackport-sdk`: native Rust API.
+- `packages/typescript`: Node.js SDK over the Rust subprocess protocol.
+- `packages/python`: Python SDK over the same protocol.
+
+TypeScript and Python do not reimplement planning or provider behavior.
+
+## Documentation
+
+Start with [`docs/README.md`](docs/README.md). It links the architecture, YAML
+reference, provider contracts, state and secret model, SDK protocol, adapter
+development guide, and test procedures.

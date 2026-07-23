@@ -107,6 +107,8 @@ pub enum ManifestError {
         resource: String,
         dependency: String,
     },
+    #[error("resource dependency cycle detected: {0}")]
+    DependencyCycle(String),
     #[error("resource `{0}` contains a likely secret value; use variables.*.secret_ref instead")]
     SecretValue(String),
 }
@@ -144,6 +146,7 @@ pub fn validate_manifest(manifest: &Manifest) -> Result<ValidationReport, Manife
             }
         }
     }
+    validate_acyclic_dependencies(manifest)?;
 
     let warnings = manifest
         .variables
@@ -163,6 +166,47 @@ pub fn validate_manifest(manifest: &Manifest) -> Result<ValidationReport, Manife
         valid: true,
         warnings,
     })
+}
+
+fn validate_acyclic_dependencies(manifest: &Manifest) -> Result<(), ManifestError> {
+    let mut remaining = manifest
+        .resources
+        .iter()
+        .map(|resource| {
+            (
+                resource.id.as_str(),
+                resource
+                    .depends_on
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<HashSet<_>>(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    loop {
+        let ready = remaining
+            .iter()
+            .filter(|(_, dependencies)| dependencies.is_empty())
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
+        if ready.is_empty() {
+            break;
+        }
+        for id in ready {
+            remaining.remove(id);
+            for dependencies in remaining.values_mut() {
+                dependencies.remove(id);
+            }
+        }
+    }
+
+    if remaining.is_empty() {
+        return Ok(());
+    }
+    let mut cycle = remaining.keys().copied().collect::<Vec<_>>();
+    cycle.sort();
+    Err(ManifestError::DependencyCycle(cycle.join(", ")))
 }
 
 pub fn resource_fingerprint(resource: &Resource) -> String {

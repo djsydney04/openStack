@@ -64,6 +64,8 @@ export interface StackportClient {
   stackSpecToManifest(spec: JsonValue, target?: string): Promise<Manifest>;
   providers(): Promise<JsonValue>;
   provider(provider: string): Promise<JsonValue>;
+  providerProbePlan(provider?: string, contexts?: JsonValue): Promise<JsonValue>;
+  probeProviderAccess(provider?: string, contexts?: JsonValue): Promise<JsonValue>;
   providerExecutionPlan(manifest: Manifest, targetProvider: string, state?: JsonValue): Promise<JsonValue>;
   providerRequestPlan(
     manifest: Manifest,
@@ -177,6 +179,16 @@ export function createStackportClient(options: StackportClientOptions = {}): Sta
       }),
     providers: () => request<JsonValue>("providers.list", {}),
     provider: (provider) => request<JsonValue>("providers.show", { provider }),
+    providerProbePlan: (provider, contexts) =>
+      request<JsonValue>("providers.probePlan", {
+        ...(provider ? { provider } : {}),
+        ...(contexts ? { contexts } : {}),
+      }),
+    probeProviderAccess: (provider, contexts) =>
+      request<JsonValue>("providers.probe", {
+        ...(provider ? { provider } : {}),
+        ...(contexts ? { contexts } : {}),
+      }),
     providerExecutionPlan: (manifest, targetProvider, state) =>
       request<JsonValue>("providers.executionPlan", {
         manifest: manifest as unknown as JsonValue,

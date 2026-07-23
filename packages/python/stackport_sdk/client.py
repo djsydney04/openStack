@@ -66,6 +66,30 @@ class StackportClient:
     def provider(self, provider: str) -> dict[str, Any]:
         return self.request("providers.show", {"provider": provider})
 
+    def provider_probe_plan(
+        self,
+        provider: str | None = None,
+        contexts: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if provider is not None:
+            params["provider"] = provider
+        if contexts is not None:
+            params["contexts"] = contexts
+        return self.request("providers.probePlan", params)
+
+    def probe_provider_access(
+        self,
+        provider: str | None = None,
+        contexts: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if provider is not None:
+            params["provider"] = provider
+        if contexts is not None:
+            params["contexts"] = contexts
+        return self.request("providers.probe", params)
+
     def provider_execution_plan(
         self,
         manifest: dict[str, Any],

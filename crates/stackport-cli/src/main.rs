@@ -7,10 +7,11 @@ use stackport_core::importers::{import_supabase, import_vercel, SupabaseProject,
 use stackport_core::manifest::{validate_manifest, Manifest, MigrationScope};
 use stackport_core::planner::{create_plan_with_state, MigrationPlan};
 use stackport_core::provider_runtime::{
-    apply_provider_requests, build_provider_import_plan, build_provider_read_plan,
-    build_provider_request_plan, compare_provider_observations, execute_provider_observations,
-    reconcile_plan_with_observations, HttpProviderTransport, ProcessEnvironment, ProviderContext,
-    ProviderDriftStatus, ProviderRequestStatus,
+    apply_provider_requests, build_provider_import_plan, build_provider_probe_plan,
+    build_provider_read_plan, build_provider_request_plan, compare_provider_observations,
+    execute_provider_observations, execute_provider_probe, reconcile_plan_with_observations,
+    HttpProviderTransport, ProcessEnvironment, ProviderContext, ProviderDriftStatus,
+    ProviderRequestStatus,
 };
 use stackport_core::providers::{provider_definition, provider_execution_plan, provider_registry};
 use stackport_core::rpc::{handle_rpc_request, JsonRpcRequest};
@@ -140,7 +141,14 @@ enum StackCommand {
 #[derive(Debug, Subcommand)]
 enum ProvidersCommand {
     List,
-    Show { provider: String },
+    Show {
+        provider: String,
+    },
+    Doctor {
+        provider: Option<String>,
+        #[arg(long)]
+        execute: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -372,6 +380,27 @@ fn main() -> Result<()> {
                 let definition = provider_definition(&provider)
                     .ok_or_else(|| anyhow::anyhow!("provider `{provider}` is not registered"))?;
                 print_json(&definition)?;
+            }
+            ProvidersCommand::Doctor { provider, execute } => {
+                let plan = build_provider_probe_plan(provider.as_deref(), &HashMap::new())
+                    .map_err(anyhow::Error::msg)?;
+                if execute {
+                    let report = execute_provider_probe(
+                        &plan,
+                        &HttpProviderTransport::default(),
+                        &ProcessEnvironment,
+                    );
+                    let failed = report
+                        .results
+                        .iter()
+                        .any(|result| result.status != ProviderRequestStatus::Applied);
+                    print_json(&report)?;
+                    if failed {
+                        anyhow::bail!("one or more provider access probes failed");
+                    }
+                } else {
+                    print_json(&plan)?;
+                }
             }
         },
         Command::Rpc { once } => {

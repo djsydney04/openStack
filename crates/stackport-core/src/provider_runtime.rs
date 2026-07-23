@@ -46,6 +46,8 @@ pub struct ProviderRequest {
     pub secret_references: HashMap<String, String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub identifier_bindings: HashMap<String, ProviderIdentifierBinding>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub identifiers: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -70,6 +72,19 @@ pub struct ProviderAuthHeader {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProviderExecutionReport {
     pub results: Vec<ProviderRequestResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderProbeReport {
+    pub results: Vec<ProviderProbeResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderProbeResult {
+    pub provider: String,
+    pub status: ProviderRequestStatus,
+    pub status_code: Option<u16>,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -132,6 +147,7 @@ pub struct ResolvedProviderRequest {
     url: String,
     headers: Vec<(String, String)>,
     body: Option<Value>,
+    identifiers: HashMap<String, String>,
 }
 
 impl ResolvedProviderRequest {
@@ -165,6 +181,10 @@ impl ResolvedProviderRequest {
 
     pub fn body(&self) -> Option<&Value> {
         self.body.as_ref()
+    }
+
+    pub fn identifiers(&self) -> &HashMap<String, String> {
+        &self.identifiers
     }
 }
 
@@ -251,8 +271,12 @@ impl ProviderTransport for HttpProviderTransport {
         {
             return Err("provider GraphQL request returned one or more errors".to_string());
         }
-        let (provider_id, identifiers, sensitive_values) =
-            extract_response_values(request.provider(), request.graphql_operation(), &body);
+        let (provider_id, identifiers, sensitive_values) = extract_response_values(
+            request.provider(),
+            request.provider_resource(),
+            request.graphql_operation(),
+            &body,
+        );
         let observed = if matches!(
             request.operation(),
             ProviderOperation::Read | ProviderOperation::Import | ProviderOperation::Plan
@@ -327,7 +351,7 @@ pub fn build_provider_request_plan(
                     compile_request(
                         manifest,
                         step,
-                        resources.get(step.resource_id.as_str()).copied(),
+                        step.prior_resource.as_ref(),
                         provider,
                         Some(provider_resource),
                         PlanAction::Delete,
@@ -377,10 +401,15 @@ pub fn build_provider_request_plan(
                     .provider
                     .as_deref()
                     .unwrap_or(plan.target_provider.as_str());
+                let request_resource = if step.action == PlanAction::Delete {
+                    step.prior_resource.as_ref()
+                } else {
+                    resources.get(step.resource_id.as_str()).copied()
+                };
                 compile_request(
                     manifest,
                     step,
-                    resources.get(step.resource_id.as_str()).copied(),
+                    request_resource,
                     provider,
                     step.provider_resource.as_deref(),
                     step.action.clone(),
@@ -413,6 +442,106 @@ pub fn build_provider_request_plan(
         requests,
         warnings,
         executable,
+    }
+}
+
+pub fn build_provider_probe_plan(
+    provider: Option<&str>,
+    contexts: &HashMap<String, ProviderContext>,
+) -> Result<ProviderRequestPlan, String> {
+    let definitions = match provider {
+        Some(name) => vec![provider_definition(name)
+            .ok_or_else(|| format!("provider `{name}` is not registered"))?],
+        None => crate::providers::provider_registry(),
+    };
+    let requests = definitions
+        .into_iter()
+        .map(|definition| {
+            let context = contexts.get(&definition.name).cloned().unwrap_or_default();
+            let (method, path, graphql_operation, body) = match definition.name.as_str() {
+                "vercel" => (HttpMethod::Get, "/v2/user", None, None),
+                "supabase" => (HttpMethod::Get, "/v1/projects", None, None),
+                "neon" => (HttpMethod::Get, "/projects?limit=1", None, None),
+                "railway" => (
+                    HttpMethod::Post,
+                    "",
+                    Some("me".to_string()),
+                    Some(serde_json::json!({
+                        "query": "query StackportProviderProbe { me { id } }",
+                        "variables": {}
+                    })),
+                ),
+                _ => unreachable!("registered provider has no access probe"),
+            };
+            let base_url = context
+                .base_url
+                .as_deref()
+                .unwrap_or(definition.api.base_url.as_str())
+                .trim_end_matches('/');
+            let url = if path.is_empty() {
+                base_url.to_string()
+            } else {
+                format!("{base_url}/{path}", path = path.trim_start_matches('/'))
+            };
+            let auth = if definition.name == "railway" {
+                ProviderAuthRequirement {
+                    alternatives: bearer_auth("RAILWAY_TOKEN"),
+                }
+            } else {
+                auth_requirement(&definition.name, "access-probe")
+            };
+            ProviderRequest {
+                id: format!("{}:probe", definition.name),
+                resource_id: definition.name.clone(),
+                provider: definition.name.clone(),
+                provider_resource: "access-probe".to_string(),
+                action: PlanAction::Noop,
+                method,
+                url,
+                operation: ProviderOperation::Read,
+                graphql_operation,
+                auth,
+                body,
+                unresolved_identifiers: vec![],
+                secret_references: HashMap::new(),
+                identifier_bindings: HashMap::new(),
+                identifiers: HashMap::new(),
+            }
+        })
+        .collect();
+    Ok(ProviderRequestPlan {
+        requests,
+        warnings: vec![],
+        executable: true,
+    })
+}
+
+pub fn execute_provider_probe<T: ProviderTransport, R: RuntimeValueResolver>(
+    plan: &ProviderRequestPlan,
+    transport: &T,
+    resolver: &R,
+) -> ProviderProbeReport {
+    let provider_by_request = plan
+        .requests
+        .iter()
+        .map(|request| (request.id.as_str(), request.provider.as_str()))
+        .collect::<HashMap<_, _>>();
+    let report = execute_provider_observations(plan, transport, resolver);
+    ProviderProbeReport {
+        results: report
+            .results
+            .into_iter()
+            .map(|result| ProviderProbeResult {
+                provider: provider_by_request
+                    .get(result.request_id.as_str())
+                    .copied()
+                    .unwrap_or("unknown")
+                    .to_string(),
+                status: result.status,
+                status_code: result.status_code,
+                message: result.message,
+            })
+            .collect(),
     }
 }
 
@@ -514,6 +643,12 @@ fn build_provider_observation_plan(
                 .unwrap_or_default(),
             prior_fingerprint: current.map(|current| current.fingerprint.clone()),
             desired_fingerprint: None,
+            prior_resource: current.and_then(|current| {
+                current
+                    .last_applied
+                    .as_ref()
+                    .and_then(|value| serde_json::from_value(value.clone()).ok())
+            }),
         };
         let context = contexts.get(provider_name).cloned().unwrap_or_default();
         let (identifiers, identifier_bindings) = collect_identifiers(
@@ -563,6 +698,7 @@ fn build_provider_observation_plan(
             unresolved_identifiers,
             secret_references,
             identifier_bindings,
+            identifiers,
         });
     }
 
@@ -609,7 +745,9 @@ fn compile_service_follow_ups(
     match provider {
         "railway" => {
             let mut variable_resource = resource.clone();
-            variable_resource.depends_on = vec![resource.id.clone()];
+            if !variable_resource.depends_on.contains(&resource.id) {
+                variable_resource.depends_on.push(resource.id.clone());
+            }
             if action == PlanAction::Create {
                 compile_request(
                     manifest,
@@ -662,6 +800,9 @@ fn compile_service_follow_ups(
                 })
                 .collect::<Vec<_>>();
             let mut environment_resource = resource.clone();
+            if !environment_resource.depends_on.contains(&resource.id) {
+                environment_resource.depends_on.push(resource.id.clone());
+            }
             environment_resource.properties = Value::Array(values);
             compile_request(
                 manifest,
@@ -677,7 +818,7 @@ fn compile_service_follow_ups(
                 warnings,
             );
             if let Some(request) = requests.last_mut() {
-                request.url.push_str("?upsert=true");
+                append_query_parameter(&mut request.url, "upsert", "true");
             }
         }
         _ => {}
@@ -751,8 +892,7 @@ fn compile_request(
             }) {
                 unresolved_identifiers.push("valid function slug".to_string());
             } else {
-                url.push_str("?slug=");
-                url.push_str(slug);
+                append_query_parameter(&mut url, "slug", slug);
             }
         }
     }
@@ -794,6 +934,7 @@ fn compile_request(
         unresolved_identifiers,
         secret_references,
         identifier_bindings,
+        identifiers,
     });
 }
 
@@ -991,19 +1132,23 @@ fn execute_provider_requests_with_policy<T: ProviderTransport, R: RuntimeValueRe
                 match resolve_request(request, resolver, &completed, &provider_secrets) {
                     Err(message) => (blocked_result(request, message), HashMap::new()),
                     Ok(resolved) => match transport.send(&resolved) {
-                        Ok(response) => (
-                            ProviderRequestResult {
-                                request_id: request.id.clone(),
-                                resource_id: request.resource_id.clone(),
-                                status: ProviderRequestStatus::Applied,
-                                status_code: Some(response.status_code),
-                                provider_id: response.provider_id,
-                                identifiers: response.identifiers,
-                                observed: response.observed,
-                                message: "provider request applied".to_string(),
-                            },
-                            response.sensitive_values,
-                        ),
+                        Ok(response) => {
+                            let mut identifiers = resolved.identifiers().clone();
+                            identifiers.extend(response.identifiers);
+                            (
+                                ProviderRequestResult {
+                                    request_id: request.id.clone(),
+                                    resource_id: request.resource_id.clone(),
+                                    status: ProviderRequestStatus::Applied,
+                                    status_code: Some(response.status_code),
+                                    provider_id: response.provider_id,
+                                    identifiers,
+                                    observed: response.observed,
+                                    message: "provider request applied".to_string(),
+                                },
+                                response.sensitive_values,
+                            )
+                        }
                         Err(message) => (
                             ProviderRequestResult {
                                 request_id: request.id.clone(),
@@ -1082,6 +1227,10 @@ pub fn apply_provider_requests<T: ProviderTransport, R: RuntimeValueResolver>(
         let auxiliary_request = request.id.ends_with(":environment")
             || request.id.ends_with(":settings")
             || request.id.ends_with(":variables");
+        let mut identifiers = previous
+            .map(|resource| resource.identifiers.clone())
+            .unwrap_or_default();
+        identifiers.extend(result.identifiers.clone());
         let provider_id = if auxiliary_request {
             previous.map(|resource| resource.provider_id.clone())
         } else {
@@ -1089,18 +1238,9 @@ pub fn apply_provider_requests<T: ProviderTransport, R: RuntimeValueResolver>(
                 .provider_id
                 .clone()
                 .or_else(|| previous.map(|resource| resource.provider_id.clone()))
-        };
-        let Some(provider_id) = provider_id else {
-            state_warnings.push(format!(
-                "provider applied `{}` but returned no resource id; state was not advanced",
-                request.resource_id
-            ));
-            continue;
-        };
-        let mut identifiers = previous
-            .map(|resource| resource.identifiers.clone())
-            .unwrap_or_default();
-        identifiers.extend(result.identifiers.clone());
+                .or_else(|| stable_provider_id(request, resource, &identifiers))
+        }
+        .unwrap_or_else(|| resource.id.clone());
         let provider_resource = provider_definition(&request.provider).and_then(|definition| {
             definition
                 .resources
@@ -1168,6 +1308,16 @@ fn resolve_request<R: RuntimeValueResolver>(
         })
         .transpose()?;
     let url = resolve_identifier_text(&request.url, &request.identifier_bindings, completed)?;
+    let identifiers = request
+        .identifiers
+        .iter()
+        .map(|(name, value)| {
+            Ok((
+                name.clone(),
+                resolve_identifier_text(value, &request.identifier_bindings, completed)?,
+            ))
+        })
+        .collect::<Result<HashMap<_, _>, String>>()?;
     Ok(ResolvedProviderRequest {
         provider: request.provider.clone(),
         provider_resource: request.provider_resource.clone(),
@@ -1177,6 +1327,7 @@ fn resolve_request<R: RuntimeValueResolver>(
         url,
         headers,
         body,
+        identifiers,
     })
 }
 
@@ -1243,6 +1394,7 @@ fn resolve_identifier_text(
 
 fn extract_response_values(
     provider: &str,
+    provider_resource: &str,
     graphql_operation: Option<&str>,
     body: &Value,
 ) -> (
@@ -1253,17 +1405,45 @@ fn extract_response_values(
     let mut identifiers = HashMap::new();
     let mut sensitive_values = HashMap::new();
     match provider {
-        "vercel" => copy_response_id(body, "id", "idOrName", &mut identifiers),
-        "supabase" => {
-            copy_response_id(body, "id", "ref", &mut identifiers);
-            copy_response_id(body, "ref", "ref", &mut identifiers);
+        "vercel" => {
+            let target = match provider_resource {
+                "environment-variable" => "envId",
+                "deployment" => "idOrUrl",
+                "domain" => "id",
+                _ => "idOrName",
+            };
+            copy_nested_response_id(body, "id", target, &mut identifiers);
+            if provider_resource == "project" {
+                copy_nested_response_id(body, "id", "projectId", &mut identifiers);
+            }
+            if provider_resource == "domain" {
+                copy_nested_response_id(body, "name", "domain", &mut identifiers);
+            }
         }
+        "supabase" => match provider_resource {
+            "storage-bucket" => {
+                copy_nested_response_id(body, "id", "bucket_id", &mut identifiers);
+                copy_nested_response_id(body, "name", "bucket_id", &mut identifiers);
+            }
+            "edge-function" => {
+                copy_nested_response_id(body, "slug", "function_slug", &mut identifiers);
+                copy_nested_response_id(body, "id", "function_id", &mut identifiers);
+            }
+            "project-database" => {
+                copy_nested_response_id(body, "id", "ref", &mut identifiers);
+                copy_nested_response_id(body, "ref", "ref", &mut identifiers);
+            }
+            _ => {}
+        },
         "neon" => {
             if let Some(project) = body.get("project") {
                 copy_response_id(project, "id", "project_id", &mut identifiers);
             }
             if let Some(branch) = body.get("branch") {
                 copy_response_id(branch, "id", "branch_id", &mut identifiers);
+            }
+            if provider_resource == "role" {
+                copy_nested_response_id(body, "name", "role_name", &mut identifiers);
             }
             if let Some(connection_uri) = find_string_by_key(body, "connection_uri") {
                 sensitive_values.insert("DATABASE_URL".to_string(), connection_uri.to_string());
@@ -1286,9 +1466,24 @@ fn extract_response_values(
         }
         _ => copy_response_id(body, "id", "id", &mut identifiers),
     }
-    let provider_id = ["idOrName", "ref", "project_id", "serviceId", "id"]
-        .iter()
-        .find_map(|key| identifiers.get(*key).cloned());
+    let provider_id = [
+        "idOrName",
+        "ref",
+        "project_id",
+        "branch_id",
+        "role_name",
+        "serviceId",
+        "environmentId",
+        "envId",
+        "bucket_id",
+        "function_id",
+        "function_slug",
+        "idOrUrl",
+        "id",
+        "domain",
+    ]
+    .iter()
+    .find_map(|key| identifiers.get(*key).cloned());
     (provider_id, identifiers, sensitive_values)
 }
 
@@ -1543,6 +1738,48 @@ fn copy_response_id(
     }
 }
 
+fn copy_nested_response_id(
+    value: &Value,
+    source_key: &str,
+    target_key: &str,
+    identifiers: &mut HashMap<String, String>,
+) {
+    if let Some(value) = find_string_by_key(value, source_key) {
+        identifiers.insert(target_key.to_string(), value.to_string());
+    }
+}
+
+fn stable_provider_id(
+    request: &ProviderRequest,
+    resource: &Resource,
+    identifiers: &HashMap<String, String>,
+) -> Option<String> {
+    let keys = match request.provider_resource.as_str() {
+        "project" => &["projectId", "idOrName", "project_id"][..],
+        "project-database" => &["ref", "project_id"][..],
+        "environment" => &["environmentId", "environment_id"][..],
+        "environment-variable" => &["envId", "name"][..],
+        "storage-bucket" => &["bucket_id"][..],
+        "edge-function" => &["function_slug", "function_id"][..],
+        "project-secret" | "variable" => &["name"][..],
+        "branch" => &["branch_id"][..],
+        "role" => &["role_name"][..],
+        "service" => &["serviceId", "service_id"][..],
+        "domain" | "custom-domain" => &["id", "domain"][..],
+        "deployment" => &["idOrUrl", "id"][..],
+        _ => &[][..],
+    };
+    keys.iter()
+        .find_map(|key| identifiers.get(*key).cloned())
+        .or_else(|| {
+            resource
+                .properties
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+}
+
 fn resolve_auth<R: RuntimeValueResolver>(
     auth: &ProviderAuthRequirement,
     resolver: &R,
@@ -1664,10 +1901,42 @@ fn request_url(
     for (name, value) in identifiers {
         path = path.replace(&format!("{{{name}}}"), value);
     }
-    if path.starts_with("http://") || path.starts_with("https://") {
-        return path;
+    let mut url = if path.starts_with("http://") || path.starts_with("https://") {
+        path
+    } else {
+        format!("{base_url}/{path}", path = path.trim_start_matches('/'))
+    };
+    if definition.name == "vercel" {
+        if let Some(team_id) = identifiers
+            .get("teamId")
+            .or_else(|| identifiers.get("team_id"))
+        {
+            append_query_parameter(&mut url, "teamId", team_id);
+        }
     }
-    format!("{base_url}/{path}", path = path.trim_start_matches('/'))
+    url
+}
+
+fn append_query_parameter(url: &mut String, name: &str, value: &str) {
+    url.push(if url.contains('?') { '&' } else { '?' });
+    url.push_str(&percent_encode_query(name));
+    url.push('=');
+    url.push_str(&percent_encode_query(value));
+}
+
+fn percent_encode_query(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[(byte >> 4) as usize]));
+            encoded.push(char::from(HEX[(byte & 0x0f) as usize]));
+        }
+    }
+    encoded
 }
 
 fn collect_identifiers(
@@ -1692,6 +1961,44 @@ fn collect_identifiers(
             if let Some(value) = value.as_str() {
                 identifiers.insert(key.clone(), value.to_string());
             }
+        }
+    }
+    if let Some(properties) = resource.and_then(|resource| resource.properties.as_object()) {
+        for name in [
+            "project_id",
+            "projectId",
+            "environment_id",
+            "environmentId",
+            "service_id",
+            "serviceId",
+            "branch_id",
+            "branchId",
+            "database_name",
+            "role_name",
+            "project_url",
+            "bucket_id",
+            "function_slug",
+            "idOrName",
+            "idOrUrl",
+            "envId",
+        ] {
+            if let Some(value) = properties.get(name).and_then(Value::as_str) {
+                identifiers.insert(name.to_string(), value.to_string());
+            }
+        }
+        copy_property_identifier(properties, "name", "name", &mut identifiers);
+        copy_property_identifier(properties, "key", "name", &mut identifiers);
+        match resource.map(|resource| &resource.kind) {
+            Some(ResourceKind::StorageBucket) => {
+                copy_property_identifier(properties, "name", "bucket_id", &mut identifiers)
+            }
+            Some(ResourceKind::Function) => {
+                copy_property_identifier(properties, "slug", "function_slug", &mut identifiers)
+            }
+            Some(ResourceKind::DatabaseRole) => {
+                copy_property_identifier(properties, "name", "role_name", &mut identifiers)
+            }
+            _ => {}
         }
     }
     if let Some(provider_id) = &step.provider_id {
@@ -1748,9 +2055,6 @@ fn collect_identifiers(
             _ => {}
         }
     }
-    identifiers
-        .entry("idOrName".to_string())
-        .or_insert_with(|| manifest.application.name.clone());
     if let Some(hostname) = resource
         .and_then(|resource| resource.properties.get("hostname"))
         .and_then(Value::as_str)
@@ -1758,31 +2062,181 @@ fn collect_identifiers(
         identifiers.insert("domain".to_string(), hostname.to_string());
     }
     add_identifier_aliases(&mut identifiers);
-    if required_identifiers.iter().any(|name| name == "serviceId")
-        && !has_identifier(&identifiers, "serviceId")
-    {
-        if let Some(dependency) = resource
-            .and_then(|resource| resource.depends_on.first())
-            .and_then(|dependency| plan_steps.get(dependency.as_str()))
-        {
-            if let Some(provider_id) = &dependency.provider_id {
-                identifiers.insert("serviceId".to_string(), provider_id.clone());
-            } else if let Some(request_id) = output_request_id(dependency) {
-                let binding = ProviderIdentifierBinding {
-                    request_id,
-                    response_identifier: "provider_id".to_string(),
-                };
-                identifiers.insert(
-                    "serviceId".to_string(),
-                    identifier_placeholder("serviceId", &binding),
-                );
-                bindings.insert("serviceId".to_string(), binding);
-            }
+    let dependency_ids = provider_dependency_ids(manifest, resource);
+    for identifier in required_identifiers {
+        if has_identifier(&identifiers, identifier) {
+            continue;
+        }
+        let Some((dependency, response_identifier)) = dependency_ids
+            .iter()
+            .filter_map(|dependency_id| {
+                let dependency = plan_steps.get(dependency_id.as_str()).copied()?;
+                if dependency.provider != step.provider {
+                    return None;
+                }
+                if !dependency_can_supply(manifest, dependency_id, identifier) {
+                    return None;
+                }
+                dependency_response_identifier(identifier, dependency)
+                    .map(|response_identifier| (dependency, response_identifier))
+            })
+            .next()
+        else {
+            continue;
+        };
+        if let Some(value) = dependency_identifier_value(dependency, identifier) {
+            identifiers.insert(identifier.clone(), value);
+        } else if let Some(request_id) = output_request_id(dependency) {
+            let binding = ProviderIdentifierBinding {
+                request_id,
+                response_identifier,
+            };
+            let placeholder = identifier_placeholder(identifier, &binding);
+            let value = if identifier == "project_url" {
+                format!("https://{placeholder}.supabase.co")
+            } else {
+                placeholder
+            };
+            identifiers.insert(identifier.clone(), value);
+            bindings.insert(identifier.clone(), binding);
         }
     }
+    if let Some(project_ref) = identifiers.get("ref").cloned() {
+        identifiers
+            .entry("project_url".to_string())
+            .or_insert_with(|| format!("https://{project_ref}.supabase.co"));
+    }
+    identifiers
+        .entry("idOrName".to_string())
+        .or_insert_with(|| manifest.application.name.clone());
     (identifiers, bindings)
 }
 
+fn copy_property_identifier(
+    properties: &Map<String, Value>,
+    source: &str,
+    target: &str,
+    identifiers: &mut HashMap<String, String>,
+) {
+    if let Some(value) = properties.get(source).and_then(Value::as_str) {
+        identifiers
+            .entry(target.to_string())
+            .or_insert_with(|| value.to_string());
+    }
+}
+
+fn provider_dependency_ids(manifest: &Manifest, resource: Option<&Resource>) -> Vec<String> {
+    let mut dependency_ids = resource
+        .map(|resource| resource.depends_on.clone())
+        .unwrap_or_default();
+    let direct_dependencies = dependency_ids.clone();
+    for dependency_id in direct_dependencies {
+        if let Some(dependency) = manifest
+            .resources
+            .iter()
+            .find(|resource| resource.id == dependency_id)
+        {
+            for transitive in &dependency.depends_on {
+                if !dependency_ids.contains(transitive) {
+                    dependency_ids.push(transitive.clone());
+                }
+            }
+        }
+    }
+    dependency_ids
+}
+
+fn dependency_can_supply(manifest: &Manifest, dependency_id: &str, required: &str) -> bool {
+    let Some(resource) = manifest
+        .resources
+        .iter()
+        .find(|resource| resource.id == dependency_id)
+    else {
+        return false;
+    };
+    match required {
+        "projectId" => resource.kind == ResourceKind::Project,
+        "project_id" => matches!(
+            resource.kind,
+            ResourceKind::Project | ResourceKind::Database
+        ),
+        "environmentId" | "environment_id" => resource.kind == ResourceKind::Environment,
+        "serviceId" | "service_id" => matches!(
+            resource.kind,
+            ResourceKind::WebService | ResourceKind::StaticSite | ResourceKind::Database
+        ),
+        "branch_id" | "branchId" => matches!(
+            resource.kind,
+            ResourceKind::DatabaseBranch | ResourceKind::Database
+        ),
+        "ref" | "project_url" => {
+            matches!(
+                resource.kind,
+                ResourceKind::Project | ResourceKind::Database
+            )
+        }
+        "idOrName" => matches!(
+            resource.kind,
+            ResourceKind::Project | ResourceKind::WebService | ResourceKind::StaticSite
+        ),
+        "id" => true,
+        _ => false,
+    }
+}
+
+fn dependency_response_identifier(required: &str, dependency: &PlanStep) -> Option<String> {
+    let response_identifier = match required {
+        "projectId" => "projectId",
+        "project_id" => "project_id",
+        "environmentId" => "environmentId",
+        "environment_id" => "environment_id",
+        "serviceId" | "service_id" => "serviceId",
+        "branch_id" | "branchId" => "branch_id",
+        "ref" | "project_url" => "ref",
+        "idOrName" => "idOrName",
+        "id" => "provider_id",
+        _ => return None,
+    };
+    if dependency.provider_id.is_some() || output_request_id(dependency).is_some() {
+        Some(response_identifier.to_string())
+    } else {
+        None
+    }
+}
+
+fn dependency_identifier_value(dependency: &PlanStep, required: &str) -> Option<String> {
+    if let Some(value) = dependency.identifiers.get(required) {
+        return Some(value.clone());
+    }
+    let aliases = match required {
+        "projectId" => &["project_id"][..],
+        "project_id" => &["projectId"][..],
+        "environmentId" => &["environment_id"][..],
+        "environment_id" => &["environmentId"][..],
+        "serviceId" => &["service_id"][..],
+        "service_id" => &["serviceId"][..],
+        "branch_id" => &["branchId"][..],
+        "branchId" => &["branch_id"][..],
+        "project_url" => &["ref"][..],
+        _ => &[][..],
+    };
+    for alias in aliases {
+        if let Some(value) = dependency.identifiers.get(*alias) {
+            return Some(if required == "project_url" {
+                format!("https://{value}.supabase.co")
+            } else {
+                value.clone()
+            });
+        }
+    }
+    dependency.provider_id.as_ref().map(|provider_id| {
+        if required == "project_url" {
+            format!("https://{provider_id}.supabase.co")
+        } else {
+            provider_id.clone()
+        }
+    })
+}
 fn output_request_id(step: &PlanStep) -> Option<String> {
     let suffix = match step.action {
         PlanAction::Create => "create",
@@ -1808,6 +2262,7 @@ fn add_identifier_aliases(identifiers: &mut HashMap<String, String>) {
         ("environment_id", "environmentId"),
         ("service_id", "serviceId"),
         ("branch_id", "branchId"),
+        ("team_id", "teamId"),
     ];
     for (snake, camel) in aliases {
         if let Some(value) = identifiers.get(snake).cloned() {
@@ -1872,6 +2327,7 @@ fn auth_requirement(provider: &str, provider_resource: &str) -> ProviderAuthRequ
         ("vercel", _) => bearer_auth("VERCEL_TOKEN"),
         ("supabase", _) => bearer_auth("SUPABASE_ACCESS_TOKEN"),
         ("neon", _) => bearer_auth("NEON_API_KEY"),
+        ("railway", "project") => bearer_auth("RAILWAY_TOKEN"),
         ("railway", _) => vec![
             vec![ProviderAuthHeader {
                 name: "Authorization".to_string(),
@@ -1906,11 +2362,18 @@ fn request_body(
     resource: Option<&Resource>,
     action: &PlanAction,
 ) -> Option<Value> {
-    if matches!(operation.method, HttpMethod::Get | HttpMethod::Delete) {
+    if matches!(operation.method, HttpMethod::Get) {
         return if provider == "railway" {
             railway_body(operation, identifiers, manifest, resource, action)
         } else {
             None
+        };
+    }
+    if matches!(operation.method, HttpMethod::Delete) {
+        return match (provider, provider_resource) {
+            ("railway", _) => railway_body(operation, identifiers, manifest, resource, action),
+            ("supabase", "project-secret") => supabase_secret_delete_body(resource),
+            _ => None,
         };
     }
     match provider {
@@ -1949,8 +2412,8 @@ fn vercel_body(
             .get("hostname")
             .cloned()
             .map(|hostname| serde_json::json!({ "name": hostname })),
-        "environment-variable" => Some(resource.properties.clone()),
-        _ => Some(resource.properties.clone()),
+        "environment-variable" => Some(provider_properties(resource)),
+        _ => Some(provider_properties(resource)),
     }
 }
 
@@ -1979,6 +2442,10 @@ fn supabase_body(
             copy_property(resource, "db_pass", &mut body, "db_pass");
             Some(Value::Object(body))
         }
+        "project-secret" => Some(match provider_properties(resource) {
+            Value::Array(values) => Value::Array(values),
+            properties => Value::Array(vec![properties]),
+        }),
         "edge-function" => {
             let mut metadata = Map::new();
             for key in [
@@ -2010,8 +2477,26 @@ fn supabase_body(
                 "files": files,
             }))
         }
-        _ => Some(resource.properties.clone()),
+        _ => Some(provider_properties(resource)),
     }
+}
+
+fn supabase_secret_delete_body(resource: Option<&Resource>) -> Option<Value> {
+    let resource = resource?;
+    let names = match &resource.properties {
+        Value::Array(values) => values
+            .iter()
+            .filter_map(|value| value.get("name").and_then(Value::as_str))
+            .map(|name| Value::String(name.to_string()))
+            .collect::<Vec<_>>(),
+        Value::Object(properties) => properties
+            .get("name")
+            .and_then(Value::as_str)
+            .map(|name| vec![Value::String(name.to_string())])
+            .unwrap_or_default(),
+        _ => vec![],
+    };
+    (!names.is_empty()).then_some(Value::Array(names))
 }
 
 fn supabase_edge_function_form(body: &Value) -> Result<reqwest::blocking::multipart::Form, String> {
@@ -2069,13 +2554,13 @@ fn neon_body(
 ) -> Option<Value> {
     let resource = resource?;
     if provider_resource == "branch" {
-        return Some(serde_json::json!({ "branch": resource.properties }));
+        return Some(serde_json::json!({ "branch": provider_properties(resource) }));
     }
     if provider_resource == "role" {
-        return Some(serde_json::json!({ "role": resource.properties }));
+        return Some(serde_json::json!({ "role": provider_properties(resource) }));
     }
     if provider_resource != "project-branch-database" {
-        return Some(resource.properties.clone());
+        return Some(provider_properties(resource));
     }
     let mut project = Map::new();
     project.insert(
@@ -2150,7 +2635,7 @@ fn railway_body(
             "mutation projectUpdate($id: String!, $input: ProjectUpdateInput!) { projectUpdate(id: $id, input: $input) { id name } }",
             serde_json::json!({
                 "id": identifier(identifiers, "projectId"),
-                "input": resource.map(|resource| resource.properties.clone()).unwrap_or_default(),
+                "input": resource.map(provider_properties).unwrap_or_default(),
             }),
         ),
         "projectDelete" => (
@@ -2176,7 +2661,7 @@ fn railway_body(
             "mutation environmentUpdate($id: String!, $input: EnvironmentUpdateInput!) { environmentUpdate(id: $id, input: $input) { id name } }",
             serde_json::json!({
                 "id": identifier(identifiers, "environmentId"),
-                "input": resource.map(|resource| resource.properties.clone()).unwrap_or_default(),
+                "input": resource.map(provider_properties).unwrap_or_default(),
             }),
         ),
         "environmentDelete" => (
@@ -2280,13 +2765,19 @@ fn railway_body(
             for key in ["projectId", "environmentId", "serviceId"] {
                 copy_identifier(identifiers, key, &mut variables, key);
             }
-            variables.insert(
-                "variables".to_string(),
-                resource
-                    .and_then(|resource| resource.properties.get("environment"))
-                    .cloned()
-                    .unwrap_or_else(|| Value::Object(Map::new())),
-            );
+            let values = resource
+                .and_then(|resource| resource.properties.get("environment"))
+                .cloned()
+                .or_else(|| {
+                    let properties = resource?.properties.as_object()?;
+                    let name = properties.get("name")?.as_str()?;
+                    let value = properties.get("value")?.clone();
+                    Some(Value::Object(
+                        [(name.to_string(), value)].into_iter().collect(),
+                    ))
+                })
+                .unwrap_or_else(|| Value::Object(Map::new()));
+            variables.insert("variables".to_string(), values);
             (
                 "mutation variableCollectionUpsert($projectId: String!, $environmentId: String!, $serviceId: String, $variables: EnvironmentVariables!) { variableCollectionUpsert(input: { projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId, variables: $variables }) }",
                 Value::Object(variables),
@@ -2318,6 +2809,14 @@ fn service_name(manifest: &Manifest, resource: &Resource) -> String {
     } else {
         format!("{}-{suffix}", manifest.application.name)
     }
+}
+
+fn provider_properties(resource: &Resource) -> Value {
+    let mut properties = resource.properties.clone();
+    if let Some(properties) = properties.as_object_mut() {
+        properties.remove("provider_config");
+    }
+    properties
 }
 
 fn copy_nested_string(

@@ -60,6 +60,8 @@ class StackportSdkTest(unittest.TestCase):
             self.assertEqual(web["provider"], "railway")
             railway = client.provider("railway")
             self.assertIs(railway["secrets"]["stores_plaintext_in_state"], False)
+            probe_plan = client.provider_probe_plan("railway")
+            self.assertEqual(len(probe_plan["requests"]), 1)
             provider_plan = client.provider_execution_plan(stack_manifest, "railway")
             self.assertEqual(len(provider_plan["steps"]), len(stack_manifest["resources"]))
             web_step = next(

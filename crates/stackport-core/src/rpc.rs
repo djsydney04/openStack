@@ -5,10 +5,10 @@ use crate::importers::{import_supabase, import_vercel, SupabaseProject, VercelPr
 use crate::manifest::{validate_manifest, Manifest, MigrationScope};
 use crate::planner::{create_plan_with_state, MigrationPlan};
 use crate::provider_runtime::{
-    apply_provider_requests, build_provider_import_plan, build_provider_read_plan,
-    build_provider_request_plan, compare_provider_observations, execute_provider_observations,
-    reconcile_plan_with_observations, HttpProviderTransport, ProcessEnvironment, ProviderContext,
-    ProviderDriftStatus,
+    apply_provider_requests, build_provider_import_plan, build_provider_probe_plan,
+    build_provider_read_plan, build_provider_request_plan, compare_provider_observations,
+    execute_provider_observations, execute_provider_probe, reconcile_plan_with_observations,
+    HttpProviderTransport, ProcessEnvironment, ProviderContext, ProviderDriftStatus,
 };
 use crate::providers::{provider_definition, provider_execution_plan, provider_registry};
 use crate::stack_spec::{stack_spec_to_manifest, validate_stack_spec, StackSpec};
@@ -96,6 +96,14 @@ pub struct ProviderApplyParams {
     pub confirm: bool,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProviderProbeParams {
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub contexts: HashMap<String, ProviderContext>,
+}
+
 pub fn handle_rpc_request(request: JsonRpcRequest) -> JsonRpcResponse {
     if request.jsonrpc != "2.0" {
         return error(request.id, -32600, "jsonrpc must be `2.0`");
@@ -151,6 +159,22 @@ pub fn handle_rpc_request(request: JsonRpcRequest) -> JsonRpcResponse {
             .and_then(|params| {
                 provider_definition(&params.provider)
                     .ok_or_else(|| format!("provider `{}` is not registered", params.provider))
+            })
+            .and_then(to_value),
+        "providers.probePlan" => parse_params::<ProviderProbeParams>(request.params)
+            .and_then(|params| {
+                build_provider_probe_plan(params.provider.as_deref(), &params.contexts)
+            })
+            .and_then(to_value),
+        "providers.probe" => parse_params::<ProviderProbeParams>(request.params)
+            .and_then(|params| {
+                let plan =
+                    build_provider_probe_plan(params.provider.as_deref(), &params.contexts)?;
+                Ok(execute_provider_probe(
+                    &plan,
+                    &HttpProviderTransport::default(),
+                    &ProcessEnvironment,
+                ))
             })
             .and_then(to_value),
         "providers.executionPlan" => parse_params::<PlanParams>(request.params)

@@ -1,50 +1,94 @@
 # Testing Stackport
 
-## Automated Tests
+The test strategy separates deterministic engine behavior, real HTTP encoding,
+SDK integration, manual CLI behavior, and opt-in live provider access.
+
+## Full Local Suite
 
 ```sh
-cargo test
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
 npm test --prefix packages/typescript
 python3 -m unittest discover -s packages/python/tests
 ```
 
-## Manual Verification
+`provider_contracts.rs` independently verifies all four providers at six
+levels:
 
-These commands exercise the built CLI and the same Rust engine used by all SDKs.
+- every advertised lifecycle has a concrete API operation;
+- every provider example validates;
+- every example compiles without unresolved dependency IDs;
+- every create flow executes through a strict provider-aware fake;
+- every destroy flow uses prior state and reverse dependency order;
+- all access probes travel through the real `reqwest` transport to localhost.
+
+The core suite separately verifies secret resolution, response redaction,
+state-aware planning, drift, JSON-RPC, real JSON HTTP requests, and real Supabase
+multipart uploads.
+
+## Provider Examples
 
 ```sh
-cargo run -q -p stackport-cli -- validate fixtures/manifest.basic.json
-cargo run -q -p stackport-cli -- import vercel fixtures/vercel.project.json
-cargo run -q -p stackport-cli -- import supabase fixtures/supabase.project.json
-cargo run -q -p stackport-cli -- analyze fixtures/manifest.basic.json --target vercel
-cargo run -q -p stackport-cli -- plan fixtures/manifest.basic.json --target render --include web
-cargo run -q -p stackport-cli -- diff fixtures/manifest.basic.json fixtures/state.basic.json
-cargo run -q -p stackport-cli -- apply fixtures/plan.render.partial.json --dry-run
-cargo run -q -p stackport-cli -- rpc --once '{"jsonrpc":"2.0","id":"manual-1","method":"stackport.version","params":{}}'
-cargo run -q -p stackport-cli -- stack validate fixtures/stack.app.yaml --target production
-cargo run -q -p stackport-cli -- stack manifest fixtures/stack.app.yaml --target production
-cargo run -q -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production
-cargo run -q -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production --provider-details
-cargo run -q -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production --provider-requests
-cargo run -q -p stackport-cli -- stack plan fixtures/stack.app.yaml --target production --refresh
-cargo run -q -p stackport-cli -- stack read fixtures/stack.app.yaml --target production
-cargo run -q -p stackport-cli -- stack import fixtures/stack.app.yaml --target production
-cargo run -q -p stackport-cli -- stack apply fixtures/stack.app.yaml --target production
-cargo run -q -p stackport-cli -- providers show railway
+stackport stack validate examples/vercel.stack.yaml --target production
+stackport stack plan examples/vercel.stack.yaml --target production --provider-requests
+
+stackport stack validate examples/supabase.stack.yaml --target production
+stackport stack plan examples/supabase.stack.yaml --target production --provider-requests
+
+stackport stack validate examples/neon.stack.yaml --target production
+stackport stack plan examples/neon.stack.yaml --target production --provider-requests
+
+stackport stack validate examples/railway.stack.yaml --target production
+stackport stack plan examples/railway.stack.yaml --target production --provider-requests
 ```
 
-Expected behavior:
+Each request plan should report `"executable": true`, no warnings, no unresolved
+identifiers, and no plaintext token or secret.
 
-- Validation returns `{ "valid": true }`.
-- Vercel import creates a web service, domain resource, and secret references.
-- Supabase import creates database, auth, storage bucket, and function resources.
-- Vercel analysis marks the database as unsupported because Vercel lacks Postgres.
-- Partial Render plan includes only `web` and warns that `database` is outside scope.
-- Diff reports update/create/delete against the stale fixture state.
-- Dry-run apply returns a planned create for `web`.
-- RPC version returns `rpc_version: "2026-07-23"`.
-- Stack YAML validation succeeds and target-specific manifest generation maps `service:web` to Railway for production.
-- Provider details show the adapter contract, auth methods, resource lifecycle support, state ID format, and no plaintext secret storage.
-- Provider details include docs-backed API operation templates for the provider adapter.
-- Provider request, read, import, and unapproved apply commands print plans without contacting a provider or exposing credentials.
-- The Rust integration tests bind local HTTP providers, verify JSON and Supabase multipart auth/body bytes across the socket, and prove returned secret fields are redacted.
+## Read-Only Live Tests
+
+Set only the credential for the provider being tested:
+
+```sh
+VERCEL_TOKEN=... cargo test -p stackport-core --test live_provider_smoke vercel_live_access_probe -- --ignored --nocapture
+SUPABASE_ACCESS_TOKEN=... cargo test -p stackport-core --test live_provider_smoke supabase_live_access_probe -- --ignored --nocapture
+NEON_API_KEY=... cargo test -p stackport-core --test live_provider_smoke neon_live_access_probe -- --ignored --nocapture
+RAILWAY_TOKEN=... cargo test -p stackport-core --test live_provider_smoke railway_live_access_probe -- --ignored --nocapture
+```
+
+Equivalent installed CLI commands:
+
+```sh
+stackport providers doctor
+stackport providers doctor vercel --execute
+```
+
+These probes perform only an identity or minimal list query. Reports include
+provider, status, HTTP status, and message. They omit observed account data.
+
+## Manual Apply Test
+
+Use a disposable provider project or account. First inspect the exact request
+plan, then apply, rerun to verify no-op behavior, change one non-secret field to
+verify update, and finally test destroy only after reviewing deletions.
+
+```sh
+stackport stack plan stack.yaml --target test --provider-requests
+stackport stack apply stack.yaml --target test --state /tmp/stackport-test-state.json --auto-approve
+stackport stack plan stack.yaml --target test --state /tmp/stackport-test-state.json --refresh
+```
+
+Live mutation tests are intentionally not in CI because they cost money and can
+delete real resources. Record the provider, disposable account, command, and
+result when performing a release qualification.
+
+## Legacy Fixture Checks
+
+```sh
+stackport validate fixtures/manifest.basic.json
+stackport import vercel fixtures/vercel.project.json
+stackport import supabase fixtures/supabase.project.json
+stackport diff fixtures/manifest.basic.json fixtures/state.basic.json
+stackport rpc --once '{"jsonrpc":"2.0","id":"manual-1","method":"stackport.version","params":{}}'
+```

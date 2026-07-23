@@ -1,5 +1,7 @@
 use crate::analysis::analyze_resource_for_provider;
-use crate::manifest::{resource_fingerprint, validate_manifest, Manifest, MigrationScope};
+use crate::manifest::{
+    resource_fingerprint, validate_manifest, Manifest, MigrationScope, Resource,
+};
 use crate::providers::provider_definition;
 use crate::state::{StackState, StateResource};
 use serde::{Deserialize, Serialize};
@@ -35,6 +37,8 @@ pub struct PlanStep {
     pub prior_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub desired_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prior_resource: Option<Resource>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -137,6 +141,7 @@ pub fn create_plan_with_state(
                 .unwrap_or_default(),
             prior_fingerprint: current.map(|current| current.fingerprint.clone()),
             desired_fingerprint: Some(desired_fingerprint),
+            prior_resource: current.and_then(state_resource_snapshot),
         });
     }
 
@@ -159,9 +164,47 @@ pub fn create_plan_with_state(
     Ok(MigrationPlan {
         target_provider: target_provider.to_string(),
         partial,
-        steps,
+        steps: order_plan_steps(steps),
         warnings,
     })
+}
+
+fn order_plan_steps(steps: Vec<PlanStep>) -> Vec<PlanStep> {
+    let (deletes, active): (Vec<_>, Vec<_>) = steps
+        .into_iter()
+        .partition(|step| step.action == PlanAction::Delete);
+    let mut ordered = topological_steps(active);
+    let mut deletes = topological_steps(deletes);
+    deletes.reverse();
+    ordered.extend(deletes);
+    ordered
+}
+
+fn topological_steps(mut steps: Vec<PlanStep>) -> Vec<PlanStep> {
+    let step_ids = steps
+        .iter()
+        .map(|step| step.resource_id.clone())
+        .collect::<HashSet<_>>();
+    let mut resolved = HashSet::<String>::new();
+    let mut ordered = Vec::with_capacity(steps.len());
+
+    while !steps.is_empty() {
+        steps.sort_by(|left, right| left.resource_id.cmp(&right.resource_id));
+        let index = steps.iter().position(|step| {
+            step.depends_on
+                .iter()
+                .filter(|dependency| step_ids.contains(dependency.as_str()))
+                .all(|dependency| resolved.contains(dependency))
+        });
+        let Some(index) = index else {
+            ordered.extend(steps);
+            break;
+        };
+        let step = steps.remove(index);
+        resolved.insert(step.resource_id.clone());
+        ordered.push(step);
+    }
+    ordered
 }
 
 fn planned_action(
@@ -225,11 +268,15 @@ fn action_reason(action: &PlanAction, current: Option<&StateResource>) -> String
 }
 
 fn delete_step(current: &StateResource, target_provider: &str) -> PlanStep {
+    let prior_resource = state_resource_snapshot(current);
     PlanStep {
         resource_id: current.id.clone(),
         action: PlanAction::Delete,
         reason: action_reason(&PlanAction::Delete, Some(current)),
-        depends_on: vec![],
+        depends_on: prior_resource
+            .as_ref()
+            .map(|resource| resource.depends_on.clone())
+            .unwrap_or_default(),
         provider: Some(
             current
                 .provider
@@ -243,7 +290,15 @@ fn delete_step(current: &StateResource, target_provider: &str) -> PlanStep {
         identifiers: current.identifiers.clone(),
         prior_fingerprint: Some(current.fingerprint.clone()),
         desired_fingerprint: None,
+        prior_resource,
     }
+}
+
+fn state_resource_snapshot(current: &StateResource) -> Option<Resource> {
+    current
+        .last_applied
+        .as_ref()
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
 }
 
 fn scope_includes_state_resource(scope: Option<&MigrationScope>, id: &str) -> bool {

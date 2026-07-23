@@ -41,6 +41,16 @@ fn validates_manifest_graph_and_secret_references() {
 }
 
 #[test]
+fn rejects_resource_dependency_cycles() {
+    let mut manifest = sample_manifest();
+    manifest.resources[0].depends_on = vec![manifest.resources[1].id.clone()];
+    manifest.resources[1].depends_on = vec![manifest.resources[0].id.clone()];
+
+    let error = validate_manifest(&manifest).expect_err("cycle should fail validation");
+    assert!(error.to_string().contains("dependency cycle"));
+}
+
+#[test]
 fn rejects_inline_secret_values() {
     let mut manifest = sample_manifest();
     manifest.resources[0].properties = serde_json::json!({
@@ -607,6 +617,7 @@ fn resolves_credentials_and_secrets_only_inside_transport_boundary() {
                 .into_iter()
                 .collect(),
             identifier_bindings: HashMap::new(),
+            identifiers: HashMap::new(),
         }],
         warnings: vec![],
         executable: true,
@@ -683,6 +694,7 @@ fn http_transport_sends_a_real_redacted_provider_request() {
             unresolved_identifiers: vec![],
             secret_references: HashMap::new(),
             identifier_bindings: HashMap::new(),
+            identifiers: HashMap::new(),
         }],
         warnings: vec![],
         executable: true,
@@ -782,6 +794,7 @@ fn http_read_redacts_provider_secret_fields() {
             unresolved_identifiers: vec![],
             secret_references: HashMap::new(),
             identifier_bindings: HashMap::new(),
+            identifiers: HashMap::new(),
         }],
         warnings: vec![],
         executable: true,
@@ -1089,11 +1102,15 @@ fn pipes_neon_connection_uri_to_railway_without_persisting_it() {
         &resolver,
     );
 
-    assert!(outcome
-        .execution
-        .results
-        .iter()
-        .all(|result| result.status == ProviderRequestStatus::Applied));
+    assert!(
+        outcome
+            .execution
+            .results
+            .iter()
+            .all(|result| result.status == ProviderRequestStatus::Applied),
+        "{:#?}",
+        outcome.execution.results
+    );
     assert_eq!(transport.calls.lock().unwrap().len(), 5);
     let service_state = outcome
         .state
