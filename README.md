@@ -30,6 +30,16 @@ Approved apply writes `.stackport/state.json`. Commit the YAML, but do not
 commit the state file unless your team has explicitly chosen Git as its state
 backend.
 
+## Automatic Apply in CI
+
+The reusable GitHub Actions workflow produces a credential-free plan on pull
+requests and can apply the merged YAML from the repository's default branch.
+The apply job supports GitHub Environment approval, serial execution, protected
+secret injection, and durable secret-free state on a dedicated branch.
+
+See [`docs/ci-cd.md`](docs/ci-cd.md) for the consumer workflow and production
+setup.
+
 ## The YAML Model
 
 ```yaml

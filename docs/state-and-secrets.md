@@ -46,10 +46,24 @@ Use process-level secret injection from CI or a secret manager. Do not put a
 token in `targets.*.config`, resource `config`, `properties`, or checked-in
 state.
 
+## CI State Backend
+
+The reusable GitHub Actions workflow stores state in a dedicated orphan branch,
+`stackport-state`, at `states/<state-key>.json`. This keeps state durable across
+ephemeral runners without mixing generated state into the application branch.
+The workflow serializes apply jobs per repository and uses a normal
+fast-forward push, so a stale writer fails instead of overwriting newer state.
+
+This branch is not an encrypted secret store. It has the same visibility and
+retention characteristics as the repository and contains provider identifiers
+and secret references. Configure it according to the repository's retention and
+access policy. See [GitHub Actions CI/CD](ci-cd.md) for setup and recovery.
+
 ## Operational Limits
 
-- State is local and uses atomic replacement, but has no distributed lock.
-- Remote state, encryption at rest, and team locking are not implemented.
+- Local state uses atomic replacement but has no distributed lock.
+- The Git branch CI backend has workflow-level serialization and stale-write
+  protection, but it is not a general distributed lock or encrypted backend.
 - Provider-side deletion is real and can cascade. Always review the printed
   request plan before `--auto-approve`.
 - Supabase Storage operations require `SUPABASE_SERVICE_ROLE_KEY` in addition

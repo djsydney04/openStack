@@ -27,5 +27,6 @@ jobs:
       - run: cargo run -q -p stackport-cli -- stack validate examples/neon.stack.yaml --target production
       - run: cargo run -q -p stackport-cli -- stack validate examples/railway.stack.yaml --target production
       - run: cargo run -q -p stackport-cli -- providers doctor
+      - run: bash tests/ci-workflow.sh
       - run: npm test --prefix packages/typescript
       - run: python3 -m unittest discover -s packages/python/tests

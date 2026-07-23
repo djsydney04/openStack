@@ -11,6 +11,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 npm test --prefix packages/typescript
 python3 -m unittest discover -s packages/python/tests
+bash tests/ci-workflow.sh
 ```
 
 `provider_contracts.rs` independently verifies all four providers at six
@@ -26,6 +27,10 @@ levels:
 The core suite separately verifies secret resolution, response redaction,
 state-aware planning, drift, JSON-RPC, real JSON HTTP requests, and real Supabase
 multipart uploads.
+
+`ci-workflow.sh` creates a real temporary bare Git remote and exercises state
+branch creation, update, retrieval, remote-failure handling, state validation,
+multiline secret export, and plan gating. It never contacts a provider.
 
 ## Provider Examples
 

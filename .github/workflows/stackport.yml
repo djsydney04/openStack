@@ -1,0 +1,235 @@
+name: Stackport IaC
+
+on:
+  workflow_call:
+    inputs:
+      stack_file:
+        description: Path to the Stackport YAML file in the caller repository
+        required: true
+        type: string
+      target:
+        description: Target name from the Stackport YAML file
+        required: true
+        type: string
+      state_key:
+        description: Stable state name stored on the state branch
+        required: false
+        default: production
+        type: string
+      state_branch:
+        description: Dedicated Git branch used for secret-free Stackport state
+        required: false
+        default: stackport-state
+        type: string
+      environment:
+        description: GitHub Environment protecting the apply job
+        required: false
+        default: production
+        type: string
+      stackport_ref:
+        description: Stackport release tag or commit to build
+        required: false
+        default: main
+        type: string
+      apply_on_push:
+        description: Apply when the caller runs from a push event
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      STACKPORT_SECRETS_JSON:
+        description: JSON object mapping environment variable names to provider and stack secrets
+        required: false
+
+jobs:
+  plan:
+    if: >-
+      ${{ github.event_name == 'pull_request' ||
+          !inputs.apply_on_push ||
+          github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out application
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out Stackport
+        uses: actions/checkout@v4
+        with:
+          repository: djsydney04/openStack
+          ref: ${{ inputs.stackport_ref }}
+          path: .stackport-engine
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build Stackport
+        run: cargo build --release --manifest-path .stackport-engine/Cargo.toml -p stackport-cli
+
+      - name: Load prior state
+        env:
+          STACKPORT_STATE_KEY: ${{ inputs.state_key }}
+          STACKPORT_STATE_BRANCH: ${{ inputs.state_branch }}
+        run: >-
+          .stackport-engine/.github/scripts/stackport-state.sh
+          read "$STACKPORT_STATE_KEY" "$RUNNER_TEMP/stackport-state.json"
+
+      - name: Validate and plan
+        env:
+          STACKPORT_BIN: .stackport-engine/target/release/stackport
+          STACKPORT_STACK_FILE: ${{ inputs.stack_file }}
+          STACKPORT_TARGET: ${{ inputs.target }}
+          STACKPORT_STATE: ${{ runner.temp }}/stackport-state.json
+          STACKPORT_PLAN_DIR: ${{ runner.temp }}/stackport-plan
+        run: |
+          mkdir -p "$STACKPORT_PLAN_DIR"
+          "$STACKPORT_BIN" stack validate "$STACKPORT_STACK_FILE" --target "$STACKPORT_TARGET" \
+            >"$STACKPORT_PLAN_DIR/validation.json"
+          "$STACKPORT_BIN" stack plan "$STACKPORT_STACK_FILE" --target "$STACKPORT_TARGET" \
+            --state "$STACKPORT_STATE" >"$STACKPORT_PLAN_DIR/plan.json"
+          "$STACKPORT_BIN" stack plan "$STACKPORT_STACK_FILE" --target "$STACKPORT_TARGET" \
+            --state "$STACKPORT_STATE" --provider-requests \
+            >"$STACKPORT_PLAN_DIR/provider-requests.json"
+          python3 .stackport-engine/.github/scripts/verify_ci_plan.py \
+            "$STACKPORT_PLAN_DIR/plan.json" \
+            "$STACKPORT_PLAN_DIR/provider-requests.json" \
+            "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload plan
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: stackport-plan-${{ inputs.state_key }}
+          path: ${{ runner.temp }}/stackport-plan
+          if-no-files-found: warn
+          retention-days: 14
+
+  apply:
+    if: >-
+      ${{ inputs.apply_on_push &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: stackport-apply-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - name: Check out application
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out Stackport
+        uses: actions/checkout@v4
+        with:
+          repository: djsydney04/openStack
+          ref: ${{ inputs.stackport_ref }}
+          path: .stackport-engine
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build Stackport
+        run: cargo build --release --manifest-path .stackport-engine/Cargo.toml -p stackport-cli
+
+      - name: Load prior state
+        env:
+          STACKPORT_STATE_KEY: ${{ inputs.state_key }}
+          STACKPORT_STATE_BRANCH: ${{ inputs.state_branch }}
+        run: >-
+          .stackport-engine/.github/scripts/stackport-state.sh
+          read "$STACKPORT_STATE_KEY" "$RUNNER_TEMP/stackport-state.json"
+
+      - name: Export provider and stack secrets
+        env:
+          STACKPORT_SECRETS_JSON: ${{ secrets.STACKPORT_SECRETS_JSON }}
+        run: python3 .stackport-engine/.github/scripts/export_stackport_secrets.py
+
+      - name: Validate merged configuration
+        env:
+          STACKPORT_BIN: .stackport-engine/target/release/stackport
+          STACKPORT_STACK_FILE: ${{ inputs.stack_file }}
+          STACKPORT_TARGET: ${{ inputs.target }}
+          STACKPORT_STATE: ${{ runner.temp }}/stackport-state.json
+          STACKPORT_PLAN_DIR: ${{ runner.temp }}/stackport-apply
+        run: |
+          mkdir -p "$STACKPORT_PLAN_DIR"
+          "$STACKPORT_BIN" stack validate "$STACKPORT_STACK_FILE" --target "$STACKPORT_TARGET" \
+            >"$STACKPORT_PLAN_DIR/validation.json"
+          "$STACKPORT_BIN" stack plan "$STACKPORT_STACK_FILE" --target "$STACKPORT_TARGET" \
+            --state "$STACKPORT_STATE" >"$STACKPORT_PLAN_DIR/plan.json"
+          "$STACKPORT_BIN" stack plan "$STACKPORT_STACK_FILE" --target "$STACKPORT_TARGET" \
+            --state "$STACKPORT_STATE" --provider-requests \
+            >"$STACKPORT_PLAN_DIR/provider-requests.json"
+          python3 .stackport-engine/.github/scripts/verify_ci_plan.py \
+            "$STACKPORT_PLAN_DIR/plan.json" \
+            "$STACKPORT_PLAN_DIR/provider-requests.json" \
+            "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply merged configuration
+        id: apply
+        env:
+          STACKPORT_BIN: .stackport-engine/target/release/stackport
+          STACKPORT_STACK_FILE: ${{ inputs.stack_file }}
+          STACKPORT_TARGET: ${{ inputs.target }}
+          STACKPORT_STATE: ${{ runner.temp }}/stackport-state.json
+          STACKPORT_PLAN_DIR: ${{ runner.temp }}/stackport-apply
+        run: |
+          set +e
+          "$STACKPORT_BIN" stack apply "$STACKPORT_STACK_FILE" --target "$STACKPORT_TARGET" \
+            --state "$STACKPORT_STATE" --auto-approve \
+            >"$STACKPORT_PLAN_DIR/apply.json"
+          apply_exit=$?
+          set -e
+          echo "exit_code=$apply_exit" >>"$GITHUB_OUTPUT"
+          cat "$STACKPORT_PLAN_DIR/apply.json"
+
+      - name: Publish state
+        if: ${{ always() }}
+        env:
+          STACKPORT_STATE_BRANCH: ${{ inputs.state_branch }}
+          STACKPORT_STATE_KEY: ${{ inputs.state_key }}
+          STACKPORT_STATE: ${{ runner.temp }}/stackport-state.json
+          STACKPORT_REPORT_DIR: ${{ runner.temp }}/stackport-apply
+        run: |
+          if [[ -s "$STACKPORT_STATE" ]]; then
+            mkdir -p "$STACKPORT_REPORT_DIR"
+            cp "$STACKPORT_STATE" "$STACKPORT_REPORT_DIR/state.json"
+            .stackport-engine/.github/scripts/stackport-state.sh \
+              write "$STACKPORT_STATE_KEY" "$STACKPORT_STATE"
+          else
+            echo "No state file was produced."
+          fi
+
+      - name: Upload apply report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: stackport-apply-${{ inputs.state_key }}
+          path: ${{ runner.temp }}/stackport-apply
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Propagate apply failure
+        if: ${{ always() && steps.apply.outputs.exit_code != '0' }}
+        env:
+          APPLY_EXIT_CODE: ${{ steps.apply.outputs.exit_code }}
+        run: |
+          echo "Stackport apply failed with exit code ${APPLY_EXIT_CODE:-not-run}." >&2
+          exit 1
