@@ -32,6 +32,11 @@ multipart uploads.
 branch creation, update, retrieval, remote-failure handling, state validation,
 multiline secret export, and plan gating. It never contacts a provider.
 
+Repository CI also calls the reusable workflow against the Vercel example with
+apply disabled. That hosted smoke test covers `workflow_call`, both checkouts,
+state loading, a release build, CLI planning, summary generation, and artifact
+upload without provider credentials.
+
 ## Provider Examples
 
 ```sh

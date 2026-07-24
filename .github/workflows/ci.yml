@@ -30,3 +30,14 @@ jobs:
       - run: bash tests/ci-workflow.sh
       - run: npm test --prefix packages/typescript
       - run: python3 -m unittest discover -s packages/python/tests
+
+  reusable-workflow-smoke:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/stackport.yml
+    with:
+      stack_file: examples/vercel.stack.yaml
+      target: production
+      state_key: ci-smoke
+      stackport_ref: ${{ github.sha }}
+      apply_on_push: false
