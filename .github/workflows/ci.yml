@@ -33,7 +33,7 @@ jobs:
 
   reusable-workflow-smoke:
     permissions:
-      contents: read
+      contents: write
     uses: ./.github/workflows/stackport.yml
     with:
       stack_file: examples/vercel.stack.yaml
