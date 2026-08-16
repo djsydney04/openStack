@@ -1,0 +1,297 @@
+from __future__ import annotations
+
+import json
+import subprocess
+from dataclasses import dataclass
+from typing import Any
+
+
+class OpenManifestError(RuntimeError):
+    pass
+
+
+@dataclass
+class OpenManifestClient:
+    command: str = "openmanifest"
+    args: tuple[str, ...] = ("rpc",)
+
+    def __post_init__(self) -> None:
+        self._next_id = 1
+        self._process = subprocess.Popen(
+            [self.command, *self.args],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    def close(self) -> None:
+        if self._process.stdin:
+            self._process.stdin.close()
+        self._process.terminate()
+        try:
+            self._process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+        if self._process.stdout:
+            self._process.stdout.close()
+        if self._process.stderr:
+            self._process.stderr.close()
+
+    def version(self) -> dict[str, Any]:
+        return self.request("openmanifest.version", {})
+
+    def validate(self, manifest: dict[str, Any]) -> dict[str, Any]:
+        return self.request("manifest.validate", manifest)
+
+    def validate_app_manifest(
+        self, manifest: dict[str, Any], target: str | None = None
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"spec": manifest}
+        if target is not None:
+            params["target"] = target
+        return self.request("appManifest.validate", params)
+
+    def compile_app_manifest(
+        self, manifest: dict[str, Any], target: str | None = None
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"spec": manifest}
+        if target is not None:
+            params["target"] = target
+        return self.request("appManifest.compile", params)
+
+    def validate_stack_spec(
+        self, spec: dict[str, Any], target: str | None = None
+    ) -> dict[str, Any]:
+        return self.validate_app_manifest(spec, target)
+
+    def stack_spec_to_manifest(
+        self, spec: dict[str, Any], target: str | None = None
+    ) -> dict[str, Any]:
+        return self.compile_app_manifest(spec, target)
+
+    def providers(self) -> dict[str, Any]:
+        return self.request("providers.list", {})
+
+    def provider(self, provider: str) -> dict[str, Any]:
+        return self.request("providers.show", {"provider": provider})
+
+    def provider_probe_plan(
+        self,
+        provider: str | None = None,
+        contexts: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if provider is not None:
+            params["provider"] = provider
+        if contexts is not None:
+            params["contexts"] = contexts
+        return self.request("providers.probePlan", params)
+
+    def probe_provider_access(
+        self,
+        provider: str | None = None,
+        contexts: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if provider is not None:
+            params["provider"] = provider
+        if contexts is not None:
+            params["contexts"] = contexts
+        return self.request("providers.probe", params)
+
+    def provider_execution_plan(
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "manifest": manifest,
+            "target_provider": target_provider,
+        }
+        if state is not None:
+            params["state"] = state
+        return self.request(
+            "providers.executionPlan",
+            params,
+        )
+
+    def import_vercel(self, project: dict[str, Any]) -> dict[str, Any]:
+        return self.request("import.vercel", project)
+
+    def provider_request_plan(
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        contexts: dict[str, Any] | None = None,
+        scope: dict[str, Any] | None = None,
+        state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "manifest": manifest,
+            "target_provider": target_provider,
+        }
+        if contexts is not None:
+            params["contexts"] = contexts
+        if scope is not None:
+            params["scope"] = scope
+        if state is not None:
+            params["state"] = state
+        return self.request("providers.requestPlan", params)
+
+    def provider_read_plan(
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        contexts: dict[str, Any] | None = None,
+        state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "manifest": manifest,
+            "target_provider": target_provider,
+        }
+        if contexts is not None:
+            params["contexts"] = contexts
+        if state is not None:
+            params["state"] = state
+        return self.request("providers.readPlan", params)
+
+    def provider_import_plan(
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        contexts: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "manifest": manifest,
+            "target_provider": target_provider,
+        }
+        if contexts is not None:
+            params["contexts"] = contexts
+        return self.request("providers.importPlan", params)
+
+    def read_provider_state(
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        contexts: dict[str, Any],
+        state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "manifest": manifest,
+            "target_provider": target_provider,
+            "contexts": contexts,
+        }
+        if state is not None:
+            params["state"] = state
+        return self.request("providers.read", params)
+
+    def import_provider_state(
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        contexts: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.request(
+            "providers.import",
+            {
+                "manifest": manifest,
+                "target_provider": target_provider,
+                "contexts": contexts,
+            },
+        )
+
+    def refresh_provider_plan(
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        contexts: dict[str, Any],
+        state: dict[str, Any],
+        scope: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "manifest": manifest,
+            "target_provider": target_provider,
+            "contexts": contexts,
+            "state": state,
+        }
+        if scope is not None:
+            params["scope"] = scope
+        return self.request("providers.refreshPlan", params)
+
+    def apply_provider_plan(
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        contexts: dict[str, Any],
+        *,
+        confirm: bool,
+        scope: dict[str, Any] | None = None,
+        state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "manifest": manifest,
+            "target_provider": target_provider,
+            "contexts": contexts,
+            "confirm": confirm,
+        }
+        if scope is not None:
+            params["scope"] = scope
+        if state is not None:
+            params["state"] = state
+        return self.request("providers.apply", params)
+
+    def import_supabase(self, project: dict[str, Any]) -> dict[str, Any]:
+        return self.request("import.supabase", project)
+
+    def analyze(self, manifest: dict[str, Any], target_provider: str) -> dict[str, Any]:
+        return self.request(
+            "portability.analyze",
+            {"manifest": manifest, "target_provider": target_provider},
+        )
+
+    def plan(
+        self,
+        manifest: dict[str, Any],
+        target_provider: str,
+        scope: dict[str, Any] | None = None,
+        state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "manifest": manifest,
+            "target_provider": target_provider,
+        }
+        if scope is not None:
+            params["scope"] = scope
+        if state is not None:
+            params["state"] = state
+        return self.request("plan.create", params)
+
+    def diff(self, manifest: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+        return self.request("state.diff", {"manifest": manifest, "state": state})
+
+    def dry_run(self, plan: dict[str, Any]) -> dict[str, Any]:
+        return self.request("apply.dryRun", {"plan": plan, "dry_run": True})
+
+    def request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        if self._process.stdin is None or self._process.stdout is None:
+            raise OpenManifestError("openmanifest subprocess is not connected")
+        request_id = str(self._next_id)
+        self._next_id += 1
+        payload = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params,
+        }
+        self._process.stdin.write(json.dumps(payload) + "\n")
+        self._process.stdin.flush()
+        line = self._process.stdout.readline()
+        if not line:
+            stderr = self._process.stderr.read() if self._process.stderr else ""
+            raise OpenManifestError(f"openmanifest subprocess produced no response: {stderr}")
+        response = json.loads(line)
+        if response.get("error"):
+            raise OpenManifestError(response["error"]["message"])
+        return response["result"]

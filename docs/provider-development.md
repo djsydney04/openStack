@@ -30,12 +30,12 @@ extraction for every identifier that a later resource needs.
 
 ## 3. Add an Example
 
-Create `examples/<provider>.stack.yaml` with every executable resource family,
+Create `examples/<provider>.openmanifest.yaml` with every executable resource family,
 real dependencies, and secret references. It must pass:
 
 ```sh
-stackport stack validate examples/<provider>.stack.yaml --target production
-stackport stack plan examples/<provider>.stack.yaml --target production --provider-requests
+openmanifest validate examples/<provider>.openmanifest.yaml --target production
+openmanifest plan examples/<provider>.openmanifest.yaml --target production --provider-requests
 ```
 
 ## 4. Test Four Layers

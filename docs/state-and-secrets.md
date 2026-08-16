@@ -2,8 +2,8 @@
 
 ## State Contents
 
-The default state path is `.stackport/state.json`. State schema
-`stackport-state/v1` records:
+The default state path is `.openmanifest/state.json`. State schema
+`openmanifest-state/v1` records:
 
 - neutral resource ID and provider
 - provider resource type and stable provider ID
@@ -16,12 +16,12 @@ It does not record provider tokens, submitted secret values, connection URIs,
 returned role passwords, or decrypted environment variables.
 
 The last-applied snapshot is required for reliable deletion. Once a resource is
-removed from YAML, Stackport still needs its old bucket name, function slug,
+removed from YAML, OpenManifest still needs its old bucket name, function slug,
 variable name, dependencies, and provider metadata to compile the destroy call.
 
 ## Apply and Drift
 
-`stack plan` compares desired fingerprints with local state. `stack plan
+`openmanifest plan` compares desired fingerprints with local state. `openmanifest plan
 --refresh` also performs provider reads and can turn a local no-op into an
 update when comparable remote fields drifted. Approved apply automatically
 refreshes when prior state exists and refuses to continue if a required read
@@ -46,10 +46,24 @@ Use process-level secret injection from CI or a secret manager. Do not put a
 token in `targets.*.config`, resource `config`, `properties`, or checked-in
 state.
 
+## CI State Backend
+
+The reusable GitHub Actions workflow stores state in a dedicated orphan branch,
+`openmanifest-state`, at `states/<state-key>.json`. This keeps state durable across
+ephemeral runners without mixing generated state into the application branch.
+The workflow serializes apply jobs per repository and uses a normal
+fast-forward push, so a stale writer fails instead of overwriting newer state.
+
+This branch is not an encrypted secret store. It has the same visibility and
+retention characteristics as the repository and contains provider identifiers
+and secret references. Configure it according to the repository's retention and
+access policy. See [GitHub Actions CI/CD](ci-cd.md) for setup and recovery.
+
 ## Operational Limits
 
-- State is local and uses atomic replacement, but has no distributed lock.
-- Remote state, encryption at rest, and team locking are not implemented.
+- Local state uses atomic replacement but has no distributed lock.
+- The Git branch CI backend has workflow-level serialization and stale-write
+  protection, but it is not a general distributed lock or encrypted backend.
 - Provider-side deletion is real and can cascade. Always review the printed
   request plan before `--auto-approve`.
 - Supabase Storage operations require `SUPABASE_SERVICE_ROLE_KEY` in addition

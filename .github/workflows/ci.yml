@@ -22,10 +22,22 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace
-      - run: cargo run -q -p stackport-cli -- stack validate examples/vercel.stack.yaml --target production
-      - run: cargo run -q -p stackport-cli -- stack validate examples/supabase.stack.yaml --target production
-      - run: cargo run -q -p stackport-cli -- stack validate examples/neon.stack.yaml --target production
-      - run: cargo run -q -p stackport-cli -- stack validate examples/railway.stack.yaml --target production
-      - run: cargo run -q -p stackport-cli -- providers doctor
+      - run: cargo run -q -p openmanifest-cli --bin openmanifest -- validate examples/vercel.openmanifest.yaml --target production
+      - run: cargo run -q -p openmanifest-cli --bin openmanifest -- validate examples/supabase.openmanifest.yaml --target production
+      - run: cargo run -q -p openmanifest-cli --bin openmanifest -- validate examples/neon.openmanifest.yaml --target production
+      - run: cargo run -q -p openmanifest-cli --bin openmanifest -- validate examples/railway.openmanifest.yaml --target production
+      - run: cargo run -q -p openmanifest-cli --bin openmanifest -- providers doctor
+      - run: bash tests/openmanifest-ci-workflow.sh
       - run: npm test --prefix packages/typescript
       - run: python3 -m unittest discover -s packages/python/tests
+
+  reusable-workflow-smoke:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/openmanifest.yml
+    with:
+      manifest_file: examples/vercel.openmanifest.yaml
+      target: production
+      state_key: ci-smoke
+      openmanifest_ref: ${{ github.sha }}
+      apply_on_push: false

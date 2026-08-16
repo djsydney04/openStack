@@ -1,4 +1,4 @@
-from openmanifest_sdk.client import OpenManifestClient, OpenManifestError
+from .client import OpenManifestClient, OpenManifestError
 
 StackportClient = OpenManifestClient
 StackportError = OpenManifestError

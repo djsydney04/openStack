@@ -1,0 +1,48 @@
+name: Stackport compatibility workflow
+
+on:
+  workflow_call:
+    inputs:
+      stack_file:
+        required: true
+        type: string
+      target:
+        required: true
+        type: string
+      state_key:
+        required: false
+        default: production
+        type: string
+      state_branch:
+        required: false
+        default: stackport-state
+        type: string
+      environment:
+        required: false
+        default: production
+        type: string
+      stackport_ref:
+        required: false
+        default: main
+        type: string
+      apply_on_push:
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      STACKPORT_SECRETS_JSON:
+        required: false
+
+jobs:
+  openmanifest:
+    uses: ./.github/workflows/openmanifest.yml
+    with:
+      manifest_file: ${{ inputs.stack_file }}
+      target: ${{ inputs.target }}
+      state_key: ${{ inputs.state_key }}
+      state_branch: ${{ inputs.state_branch }}
+      environment: ${{ inputs.environment }}
+      openmanifest_ref: ${{ inputs.stackport_ref }}
+      apply_on_push: ${{ inputs.apply_on_push }}
+    secrets:
+      OPENMANIFEST_SECRETS_JSON: ${{ secrets.STACKPORT_SECRETS_JSON }}

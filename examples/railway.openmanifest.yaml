@@ -1,0 +1,61 @@
+version: openmanifest/app/v1alpha1
+app:
+  name: openmanifest-railway-example
+  description: Railway project, environment, service, variables, and custom domain
+
+targets:
+  production:
+    provider: railway
+    environment: production
+
+secrets:
+  API_TOKEN:
+    from: env:API_TOKEN
+  SESSION_SECRET:
+    from: env:SESSION_SECRET
+
+resources:
+  project:app:
+    kind: project
+    properties:
+      name: openmanifest-railway-example
+
+  environment:production:
+    kind: environment
+    depends_on:
+      - project:app
+    properties:
+      name: production
+
+  secret:api_token:
+    kind: secret
+    capabilities:
+      - secrets
+    depends_on:
+      - project:app
+      - environment:production
+      - service:web
+    properties:
+      name: API_TOKEN
+      value: ${secret:API_TOKEN}
+
+services:
+  web:
+    source:
+      repository: djsydney04/openStack
+    build:
+      command: npm run build
+    run:
+      command: npm start
+    depends_on:
+      - project:app
+      - environment:production
+    env:
+      NODE_ENV: production
+      SESSION_SECRET:
+        secret: SESSION_SECRET
+    deploy:
+      replicas: 2
+      health_check: /health
+      domains:
+        - railway.example.com

@@ -1,8 +1,8 @@
-# Stackport Implementation Plan
+# OpenManifest Implementation Plan
 
 ## Scope
 
-Build a first complete Stackport implementation from the PRD summary:
+Build a first complete OpenManifest implementation from the PRD summary:
 
 - Rust core engine and CLI.
 - Rust SDK/native access.

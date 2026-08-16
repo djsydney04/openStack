@@ -1,7 +1,7 @@
 [project]
-name = "stackport-sdk"
+name = "openmanifest-sdk"
 version = "0.1.0"
-description = "Python SDK for Stackport subprocess RPC"
+description = "Python SDK for OpenManifest subprocess RPC"
 requires-python = ">=3.10"
 
 [tool.pytest.ini_options]

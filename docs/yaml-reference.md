@@ -1,6 +1,6 @@
 # YAML Reference
 
-The authoring schema is `stackport/app/v1alpha1`. Unknown provider properties
+The authoring schema is `openmanifest/app/v1alpha1`. Unknown provider properties
 are preserved as JSON-compatible values, while the common service and database
 fields stay portable.
 
@@ -8,7 +8,7 @@ fields stay portable.
 
 | Field | Required | Meaning |
 | --- | --- | --- |
-| `version` | yes | Must be `stackport/app/v1alpha1` |
+| `version` | yes | Must be `openmanifest/app/v1alpha1` |
 | `app` | yes | Application name, description, and tags |
 | `targets` | for target commands | Named provider destinations |
 | `services` | no | Web services with source, build, run, env, and deploy settings |
@@ -134,12 +134,12 @@ Capabilities: `build`, `serverless_functions`, `edge_functions`, `postgres`,
 ## Commands
 
 ```sh
-stackport stack validate stack.yaml --target production
-stackport stack manifest stack.yaml --target production
-stackport stack plan stack.yaml --target production
-stackport stack plan stack.yaml --target production --provider-requests
-stackport stack apply stack.yaml --target production
-stackport stack apply stack.yaml --target production --auto-approve
+openmanifest validate openmanifest.yaml --target production
+openmanifest compile openmanifest.yaml --target production
+openmanifest plan openmanifest.yaml --target production
+openmanifest plan openmanifest.yaml --target production --provider-requests
+openmanifest apply openmanifest.yaml --target production
+openmanifest apply openmanifest.yaml --target production --auto-approve
 ```
 
 Unapproved apply prints the request plan and performs no network calls.

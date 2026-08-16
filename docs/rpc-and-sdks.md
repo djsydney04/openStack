@@ -1,25 +1,25 @@
 # RPC and SDKs
 
 The CLI exposes line-delimited JSON-RPC 2.0 over stdin/stdout. Protocol version
-`2026-07-23` is returned by `stackport.version`. One input line produces one
+`2026-08-14` is returned by `openmanifest.version`. One input line produces one
 output line; diagnostics go to stderr.
 
 ```sh
-stackport rpc
+openmanifest rpc
 ```
 
 ```json
-{"jsonrpc":"2.0","id":"1","method":"stackport.version","params":{}}
+{"jsonrpc":"2.0","id":"1","method":"openmanifest.version","params":{}}
 ```
 
 ## Methods
 
 | Method | Effect |
 | --- | --- |
-| `stackport.version` | Protocol and engine versions |
+| `openmanifest.version` | Protocol and engine versions |
 | `manifest.validate` | Validate neutral manifest |
-| `stackSpec.validate` | Validate YAML object for a target |
-| `stackSpec.toManifest` | Convert YAML object to neutral manifest |
+| `appManifest.validate` | Validate an OpenManifest YAML object for a target |
+| `appManifest.compile` | Compile an OpenManifest object into the neutral resource graph |
 | `plan.create` | State-aware ordered migration plan |
 | `state.diff` | Manifest/state difference |
 | `providers.list`, `providers.show` | Provider contracts |
@@ -35,12 +35,12 @@ stackport rpc
 ## TypeScript
 
 ```ts
-import { createStackportClient } from "@stackport/sdk";
+import { createOpenManifestClient } from "@openmanifest/sdk";
 
-const client = createStackportClient();
+const client = createOpenManifestClient();
 try {
   const doctor = await client.providerProbePlan("vercel");
-  const manifest = await client.stackSpecToManifest(spec, "production");
+  const manifest = await client.compileAppManifest(spec, "production");
   const plan = await client.providerRequestPlan(manifest, "vercel");
 } finally {
   client.close();
@@ -50,12 +50,12 @@ try {
 ## Python
 
 ```python
-from stackport_sdk import StackportClient
+from openmanifest_sdk import OpenManifestClient
 
-client = StackportClient()
+client = OpenManifestClient()
 try:
     doctor = client.provider_probe_plan("supabase")
-    manifest = client.stack_spec_to_manifest(spec, "production")
+    manifest = client.compile_app_manifest(spec, "production")
     plan = client.provider_request_plan(manifest, "supabase")
 finally:
     client.close()

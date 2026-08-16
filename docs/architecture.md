@@ -1,12 +1,12 @@
 # Architecture
 
-Stackport has one engine. Rust owns every decision that changes provider or
+OpenManifest has one engine. Rust owns every decision that changes provider or
 state behavior. The CLI, Rust SDK, TypeScript SDK, and Python SDK are interfaces
 to that engine.
 
 ```mermaid
 flowchart LR
-    Y["Stack YAML"] --> V["Validation and graph"]
+    Y["OpenManifest YAML"] --> V["Validation and graph"]
     S["Prior state"] --> P["Planner"]
     V --> P
     P --> C["Provider request compiler"]
@@ -15,6 +15,7 @@ flowchart LR
     X["Environment and secret resolver"] --> E
     E --> R["Redacted result"]
     R --> N["New atomic state"]
+    N --> G["CI state branch"]
     TS["TypeScript SDK"] --> RPC["Versioned JSON-RPC subprocess"]
     PY["Python SDK"] --> RPC
     RPC --> V
@@ -63,5 +64,7 @@ state advances only for successful requests. Read/import observations continue
 after independent failures so one unavailable resource does not hide all other
 results. State writes use a temporary file followed by rename.
 
-There is currently no remote state backend or distributed state lock. Do not
-run two applies against the same state file concurrently.
+Local state has no distributed lock, so do not run two local applies against
+the same file. The GitHub Actions backend serializes applies per repository and
+uses fast-forward Git pushes to reject stale state writes. It is intentionally
+simple rather than a general remote locking service.

@@ -1,0 +1,235 @@
+name: OpenManifest IaC
+
+on:
+  workflow_call:
+    inputs:
+      manifest_file:
+        description: Path to the OpenManifest YAML file in the caller repository
+        required: true
+        type: string
+      target:
+        description: Target name from the OpenManifest YAML file
+        required: true
+        type: string
+      state_key:
+        description: Stable state name stored on the state branch
+        required: false
+        default: production
+        type: string
+      state_branch:
+        description: Dedicated Git branch used for secret-free OpenManifest state
+        required: false
+        default: openmanifest-state
+        type: string
+      environment:
+        description: GitHub Environment protecting the apply job
+        required: false
+        default: production
+        type: string
+      openmanifest_ref:
+        description: OpenManifest release tag or commit to build
+        required: false
+        default: main
+        type: string
+      apply_on_push:
+        description: Apply when the caller runs from a push event
+        required: false
+        default: true
+        type: boolean
+    secrets:
+      OPENMANIFEST_SECRETS_JSON:
+        description: JSON object mapping environment variable names to provider and application secrets
+        required: false
+
+jobs:
+  plan:
+    if: >-
+      ${{ github.event_name == 'pull_request' ||
+          !inputs.apply_on_push ||
+          github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out application
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out OpenManifest
+        uses: actions/checkout@v4
+        with:
+          repository: djsydney04/openStack
+          ref: ${{ inputs.openmanifest_ref }}
+          path: .openmanifest-engine
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build OpenManifest
+        run: cargo build --release --manifest-path .openmanifest-engine/Cargo.toml -p openmanifest-cli
+
+      - name: Load prior state
+        env:
+          OPENMANIFEST_STATE_KEY: ${{ inputs.state_key }}
+          OPENMANIFEST_STATE_BRANCH: ${{ inputs.state_branch }}
+        run: >-
+          .openmanifest-engine/.github/scripts/openmanifest-state.sh
+          read "$OPENMANIFEST_STATE_KEY" "$RUNNER_TEMP/openmanifest-state.json"
+
+      - name: Validate and plan
+        env:
+          OPENMANIFEST_BIN: .openmanifest-engine/target/release/openmanifest
+          OPENMANIFEST_MANIFEST_FILE: ${{ inputs.manifest_file }}
+          OPENMANIFEST_TARGET: ${{ inputs.target }}
+          OPENMANIFEST_STATE: ${{ runner.temp }}/openmanifest-state.json
+          OPENMANIFEST_PLAN_DIR: ${{ runner.temp }}/openmanifest-plan
+        run: |
+          mkdir -p "$OPENMANIFEST_PLAN_DIR"
+          "$OPENMANIFEST_BIN" validate "$OPENMANIFEST_MANIFEST_FILE" --target "$OPENMANIFEST_TARGET" \
+            >"$OPENMANIFEST_PLAN_DIR/validation.json"
+          "$OPENMANIFEST_BIN" plan "$OPENMANIFEST_MANIFEST_FILE" --target "$OPENMANIFEST_TARGET" \
+            --state "$OPENMANIFEST_STATE" >"$OPENMANIFEST_PLAN_DIR/plan.json"
+          "$OPENMANIFEST_BIN" plan "$OPENMANIFEST_MANIFEST_FILE" --target "$OPENMANIFEST_TARGET" \
+            --state "$OPENMANIFEST_STATE" --provider-requests \
+            >"$OPENMANIFEST_PLAN_DIR/provider-requests.json"
+          python3 .openmanifest-engine/.github/scripts/verify_ci_plan.py \
+            "$OPENMANIFEST_PLAN_DIR/plan.json" \
+            "$OPENMANIFEST_PLAN_DIR/provider-requests.json" \
+            "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload plan
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: openmanifest-plan-${{ inputs.state_key }}
+          path: ${{ runner.temp }}/openmanifest-plan
+          if-no-files-found: warn
+          retention-days: 14
+
+  apply:
+    if: >-
+      ${{ inputs.apply_on_push &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: openmanifest-apply-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - name: Check out application
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out OpenManifest
+        uses: actions/checkout@v4
+        with:
+          repository: djsydney04/openStack
+          ref: ${{ inputs.openmanifest_ref }}
+          path: .openmanifest-engine
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build OpenManifest
+        run: cargo build --release --manifest-path .openmanifest-engine/Cargo.toml -p openmanifest-cli
+
+      - name: Load prior state
+        env:
+          OPENMANIFEST_STATE_KEY: ${{ inputs.state_key }}
+          OPENMANIFEST_STATE_BRANCH: ${{ inputs.state_branch }}
+        run: >-
+          .openmanifest-engine/.github/scripts/openmanifest-state.sh
+          read "$OPENMANIFEST_STATE_KEY" "$RUNNER_TEMP/openmanifest-state.json"
+
+      - name: Export provider and application secrets
+        env:
+          OPENMANIFEST_SECRETS_JSON: ${{ secrets.OPENMANIFEST_SECRETS_JSON }}
+        run: python3 .openmanifest-engine/.github/scripts/export_openmanifest_secrets.py
+
+      - name: Validate merged configuration
+        env:
+          OPENMANIFEST_BIN: .openmanifest-engine/target/release/openmanifest
+          OPENMANIFEST_MANIFEST_FILE: ${{ inputs.manifest_file }}
+          OPENMANIFEST_TARGET: ${{ inputs.target }}
+          OPENMANIFEST_STATE: ${{ runner.temp }}/openmanifest-state.json
+          OPENMANIFEST_PLAN_DIR: ${{ runner.temp }}/openmanifest-apply
+        run: |
+          mkdir -p "$OPENMANIFEST_PLAN_DIR"
+          "$OPENMANIFEST_BIN" validate "$OPENMANIFEST_MANIFEST_FILE" --target "$OPENMANIFEST_TARGET" \
+            >"$OPENMANIFEST_PLAN_DIR/validation.json"
+          "$OPENMANIFEST_BIN" plan "$OPENMANIFEST_MANIFEST_FILE" --target "$OPENMANIFEST_TARGET" \
+            --state "$OPENMANIFEST_STATE" >"$OPENMANIFEST_PLAN_DIR/plan.json"
+          "$OPENMANIFEST_BIN" plan "$OPENMANIFEST_MANIFEST_FILE" --target "$OPENMANIFEST_TARGET" \
+            --state "$OPENMANIFEST_STATE" --provider-requests \
+            >"$OPENMANIFEST_PLAN_DIR/provider-requests.json"
+          python3 .openmanifest-engine/.github/scripts/verify_ci_plan.py \
+            "$OPENMANIFEST_PLAN_DIR/plan.json" \
+            "$OPENMANIFEST_PLAN_DIR/provider-requests.json" \
+            "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply merged configuration
+        id: apply
+        env:
+          OPENMANIFEST_BIN: .openmanifest-engine/target/release/openmanifest
+          OPENMANIFEST_MANIFEST_FILE: ${{ inputs.manifest_file }}
+          OPENMANIFEST_TARGET: ${{ inputs.target }}
+          OPENMANIFEST_STATE: ${{ runner.temp }}/openmanifest-state.json
+          OPENMANIFEST_PLAN_DIR: ${{ runner.temp }}/openmanifest-apply
+        run: |
+          set +e
+          "$OPENMANIFEST_BIN" apply "$OPENMANIFEST_MANIFEST_FILE" --target "$OPENMANIFEST_TARGET" \
+            --state "$OPENMANIFEST_STATE" --auto-approve \
+            >"$OPENMANIFEST_PLAN_DIR/apply.json"
+          apply_exit=$?
+          set -e
+          echo "exit_code=$apply_exit" >>"$GITHUB_OUTPUT"
+          cat "$OPENMANIFEST_PLAN_DIR/apply.json"
+
+      - name: Publish state
+        if: ${{ always() }}
+        env:
+          OPENMANIFEST_STATE_BRANCH: ${{ inputs.state_branch }}
+          OPENMANIFEST_STATE_KEY: ${{ inputs.state_key }}
+          OPENMANIFEST_STATE: ${{ runner.temp }}/openmanifest-state.json
+          OPENMANIFEST_REPORT_DIR: ${{ runner.temp }}/openmanifest-apply
+        run: |
+          if [[ -s "$OPENMANIFEST_STATE" ]]; then
+            mkdir -p "$OPENMANIFEST_REPORT_DIR"
+            cp "$OPENMANIFEST_STATE" "$OPENMANIFEST_REPORT_DIR/state.json"
+            .openmanifest-engine/.github/scripts/openmanifest-state.sh \
+              write "$OPENMANIFEST_STATE_KEY" "$OPENMANIFEST_STATE"
+          else
+            echo "No state file was produced."
+          fi
+
+      - name: Upload apply report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: openmanifest-apply-${{ inputs.state_key }}
+          path: ${{ runner.temp }}/openmanifest-apply
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Propagate apply failure
+        if: ${{ always() && steps.apply.outputs.exit_code != '0' }}
+        env:
+          APPLY_EXIT_CODE: ${{ steps.apply.outputs.exit_code }}
+        run: |
+          echo "OpenManifest apply failed with exit code ${APPLY_EXIT_CODE:-not-run}." >&2
+          exit 1
