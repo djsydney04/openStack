@@ -1,0 +1,75 @@
+version: openmanifest/app/v1alpha1
+app:
+  name: openmanifest-supabase-example
+  description: Supabase database, Auth, Storage, Function, and project secret
+
+targets:
+  production:
+    provider: supabase
+    region: us-east-1
+    config:
+      organization_slug: example-organization
+
+databases:
+  primary:
+    engine: postgres
+    version: "16"
+    plan: free
+    password_secret: SUPABASE_DB_PASSWORD
+
+secrets:
+  SUPABASE_DB_PASSWORD:
+    from: env:SUPABASE_DB_PASSWORD
+  WEBHOOK_SECRET:
+    from: env:WEBHOOK_SECRET
+
+resources:
+  auth:main:
+    kind: auth
+    capabilities:
+      - auth
+    depends_on:
+      - database:primary
+    properties:
+      site_url: https://app.example.com
+      uri_allow_list: https://app.example.com/**
+      disable_signup: false
+
+  bucket:avatars:
+    kind: storage_bucket
+    capabilities:
+      - object_storage
+    depends_on:
+      - database:primary
+    properties:
+      name: avatars
+      public: false
+      file_size_limit: 5242880
+      allowed_mime_types:
+        - image/jpeg
+        - image/png
+
+  function:webhook:
+    kind: function
+    capabilities:
+      - edge_functions
+    depends_on:
+      - database:primary
+    properties:
+      slug: webhook
+      name: webhook
+      entrypoint_path: index.ts
+      verify_jwt: true
+      files:
+        - path: examples/functions/webhook/index.ts
+          name: index.ts
+
+  secret:webhook:
+    kind: secret
+    capabilities:
+      - secrets
+    depends_on:
+      - database:primary
+    properties:
+      name: WEBHOOK_SECRET
+      value: ${secret:WEBHOOK_SECRET}

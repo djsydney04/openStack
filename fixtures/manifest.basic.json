@@ -1,5 +1,5 @@
 {
-  "schema_version": "stackport/v1",
+  "schema_version": "openmanifest/v1",
   "application": {
     "name": "demo-stack",
     "description": "A basic web and database stack",

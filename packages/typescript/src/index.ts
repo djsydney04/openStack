@@ -9,7 +9,7 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export interface StackportClientOptions {
+export interface OpenManifestClientOptions {
   command?: string;
   args?: string[];
 }
@@ -51,16 +51,20 @@ export interface MigrationScope {
   exclude_resources?: string[];
 }
 
-export interface StackportVersion {
+export interface OpenManifestVersion {
   rpc_version: string;
   engine: string;
 }
 
-export interface StackportClient {
+export interface OpenManifestClient {
   close(): void;
-  version(): Promise<StackportVersion>;
+  version(): Promise<OpenManifestVersion>;
   validate(manifest: Manifest): Promise<JsonValue>;
+  validateAppManifest(manifest: JsonValue, target?: string): Promise<JsonValue>;
+  compileAppManifest(manifest: JsonValue, target?: string): Promise<Manifest>;
+  /** @deprecated Use validateAppManifest. */
   validateStackSpec(spec: JsonValue, target?: string): Promise<JsonValue>;
+  /** @deprecated Use compileAppManifest. */
   stackSpecToManifest(spec: JsonValue, target?: string): Promise<Manifest>;
   providers(): Promise<JsonValue>;
   provider(provider: string): Promise<JsonValue>;
@@ -119,8 +123,8 @@ export interface StackportClient {
   dryRun(plan: JsonValue): Promise<JsonValue>;
 }
 
-export function createStackportClient(options: StackportClientOptions = {}): StackportClient {
-  const command = options.command ?? "stackport";
+export function createOpenManifestClient(options: OpenManifestClientOptions = {}): OpenManifestClient {
+  const command = options.command ?? "openmanifest";
   const args = options.args ?? ["rpc"];
   const child = spawn(command, args, {
     stdio: ["pipe", "pipe", "pipe"],
@@ -143,14 +147,14 @@ export function createStackportClient(options: StackportClientOptions = {}): Sta
 
   child.on("exit", (code) => {
     for (const [, pending] of responses) {
-      pending.reject(new Error(`stackport subprocess exited with code ${code}`));
+      pending.reject(new Error(`openmanifest subprocess exited with code ${code}`));
     }
     responses.clear();
   });
 
   function request<T>(method: string, params: JsonValue): Promise<T> {
     if (!child.stdin.writable) {
-      return Promise.reject(new Error("stackport subprocess stdin is closed"));
+      return Promise.reject(new Error("openmanifest subprocess stdin is closed"));
     }
     const id = String(nextId++);
     const payload = JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
@@ -165,8 +169,18 @@ export function createStackportClient(options: StackportClientOptions = {}): Sta
       child.stdin.end();
       child.kill();
     },
-    version: () => request<StackportVersion>("stackport.version", {}),
+    version: () => request<OpenManifestVersion>("openmanifest.version", {}),
     validate: (manifest) => request<JsonValue>("manifest.validate", manifest as unknown as JsonValue),
+    validateAppManifest: (manifest, target) =>
+      request<JsonValue>("appManifest.validate", {
+        spec: manifest,
+        ...(target ? { target } : {}),
+      }),
+    compileAppManifest: (manifest, target) =>
+      request<Manifest>("appManifest.compile", {
+        spec: manifest,
+        ...(target ? { target } : {}),
+      }),
     validateStackSpec: (spec, target) =>
       request<JsonValue>("stackSpec.validate", {
         spec,
@@ -268,3 +282,12 @@ export function createStackportClient(options: StackportClientOptions = {}): Sta
     dryRun: (plan) => request<JsonValue>("apply.dryRun", { plan, dry_run: true }),
   };
 }
+
+/** @deprecated Use OpenManifestClientOptions. */
+export type StackportClientOptions = OpenManifestClientOptions;
+/** @deprecated Use OpenManifestVersion. */
+export type StackportVersion = OpenManifestVersion;
+/** @deprecated Use OpenManifestClient. */
+export type StackportClient = OpenManifestClient;
+/** @deprecated Use createOpenManifestClient. */
+export const createStackportClient = createOpenManifestClient;

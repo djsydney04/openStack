@@ -1,12 +1,12 @@
 # Architecture
 
-Stackport has one engine. Rust owns every decision that changes provider or
+OpenManifest has one engine. Rust owns every decision that changes provider or
 state behavior. The CLI, Rust SDK, TypeScript SDK, and Python SDK are interfaces
 to that engine.
 
 ```mermaid
 flowchart LR
-    Y["Stack YAML"] --> V["Validation and graph"]
+    Y["OpenManifest YAML"] --> V["Validation and graph"]
     S["Prior state"] --> P["Planner"]
     V --> P
     P --> C["Provider request compiler"]

@@ -27,14 +27,14 @@ def summary_text(value: object) -> str:
 plan_path = pathlib.Path(sys.argv[1])
 requests_path = pathlib.Path(sys.argv[2])
 summary_path = pathlib.Path(sys.argv[3])
-plan = load_object(plan_path, "Stackport plan")
+plan = load_object(plan_path, "OpenManifest plan")
 requests = load_object(requests_path, "provider request plan")
 
 steps = plan.get("steps", [])
 provider_requests = requests.get("requests", [])
 warnings = requests.get("warnings", [])
 if not isinstance(steps, list):
-    raise SystemExit("Stackport plan steps must be an array")
+    raise SystemExit("OpenManifest plan steps must be an array")
 if not isinstance(provider_requests, list):
     raise SystemExit("provider request plan requests must be an array")
 if not isinstance(warnings, list):
@@ -43,12 +43,12 @@ if not isinstance(warnings, list):
 actions: dict[str, int] = {}
 for step in steps:
     if not isinstance(step, dict):
-        raise SystemExit("each Stackport plan step must be an object")
+        raise SystemExit("each OpenManifest plan step must be an object")
     action = summary_text(step.get("action", "unknown"))
     actions[action] = actions.get(action, 0) + 1
 
 with summary_path.open("a", encoding="utf-8") as summary:
-    summary.write("## Stackport plan\n\n")
+    summary.write("## OpenManifest plan\n\n")
     target_provider = summary_text(plan.get("target_provider", "unknown"))
     summary.write(f"- Target provider: `{target_provider}`\n")
     summary.write(f"- Partial plan: `{str(plan.get('partial', False)).lower()}`\n")
@@ -65,7 +65,7 @@ with summary_path.open("a", encoding="utf-8") as summary:
 if requests.get("executable") is True:
     raise SystemExit(0)
 
-print("Stackport provider request plan is not executable.", file=sys.stderr)
+print("OpenManifest provider request plan is not executable.", file=sys.stderr)
 for warning in warnings:
     print(f"warning: {warning}", file=sys.stderr)
 for request in provider_requests:

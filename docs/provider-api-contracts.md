@@ -5,7 +5,7 @@ runtime compiles them into REST or GraphQL requests and shares auth resolution,
 dependency ID substitution, fail-fast apply, independent observations,
 redaction, and state advancement across every adapter.
 
-`stackport providers show <provider>` prints the full contract. `stackport
+`openmanifest providers show <provider>` prints the full contract. `openmanifest
 providers doctor [provider]` prints the harmless access probe; add `--execute`
 to perform it.
 
@@ -99,7 +99,7 @@ connection URIs and role credentials are runtime-only sensitive values.
   - `https://docs.railway.com/integrations/api/manage-variables`
   - `https://docs.railway.com/integrations/api/manage-domains`
 
-A complete stack can create a project, then an environment, then a service,
+A complete application manifest can create a project, then an environment, then a service,
 then service settings, variables, and domains. The runtime substitutes project,
 environment, and service IDs into GraphQL variables. Variables resolve secret
 references immediately before `variableCollectionUpsert`. Project creation and

@@ -2,8 +2,8 @@
 
 ## State Contents
 
-The default state path is `.stackport/state.json`. State schema
-`stackport-state/v1` records:
+The default state path is `.openmanifest/state.json`. State schema
+`openmanifest-state/v1` records:
 
 - neutral resource ID and provider
 - provider resource type and stable provider ID
@@ -16,12 +16,12 @@ It does not record provider tokens, submitted secret values, connection URIs,
 returned role passwords, or decrypted environment variables.
 
 The last-applied snapshot is required for reliable deletion. Once a resource is
-removed from YAML, Stackport still needs its old bucket name, function slug,
+removed from YAML, OpenManifest still needs its old bucket name, function slug,
 variable name, dependencies, and provider metadata to compile the destroy call.
 
 ## Apply and Drift
 
-`stack plan` compares desired fingerprints with local state. `stack plan
+`openmanifest plan` compares desired fingerprints with local state. `openmanifest plan
 --refresh` also performs provider reads and can turn a local no-op into an
 update when comparable remote fields drifted. Approved apply automatically
 refreshes when prior state exists and refuses to continue if a required read
@@ -49,7 +49,7 @@ state.
 ## CI State Backend
 
 The reusable GitHub Actions workflow stores state in a dedicated orphan branch,
-`stackport-state`, at `states/<state-key>.json`. This keeps state durable across
+`openmanifest-state`, at `states/<state-key>.json`. This keeps state durable across
 ephemeral runners without mixing generated state into the application branch.
 The workflow serializes apply jobs per repository and uses a normal
 fast-forward push, so a stale writer fails instead of overwriting newer state.

@@ -1,6 +1,6 @@
 # GitHub Actions CI/CD
 
-Stackport can plan every pull request and apply the merged YAML from GitHub
+OpenManifest can plan every pull request and apply the merged YAML from GitHub
 Actions. The reusable workflow in this repository keeps those two trust levels
 separate:
 
@@ -8,40 +8,40 @@ separate:
 - pushes to the caller repository's default branch may apply;
 - a GitHub Environment can require approval before the apply job starts;
 - apply jobs are serialized per repository;
-- secret-free state is committed to a dedicated `stackport-state` branch.
+- secret-free state is committed to a dedicated `openmanifest-state` branch.
 
 ## Consumer Workflow
 
-Add this workflow to the repository that owns `stackport.yaml`:
+Add this workflow to the repository that owns `openmanifest.yaml`:
 
 ```yaml
-name: Stackport
+name: OpenManifest
 
 on:
   pull_request:
     paths:
-      - stackport.yaml
-      - .github/workflows/stackport.yml
+      - openmanifest.yaml
+      - .github/workflows/openmanifest.yml
   push:
     branches: [main]
     paths:
-      - stackport.yaml
-      - .github/workflows/stackport.yml
+      - openmanifest.yaml
+      - .github/workflows/openmanifest.yml
   workflow_dispatch:
 
 jobs:
   infrastructure:
     permissions:
       contents: write
-    uses: djsydney04/openStack/.github/workflows/stackport.yml@main
+    uses: djsydney04/openStack/.github/workflows/openmanifest.yml@main
     with:
-      stack_file: stackport.yaml
+      manifest_file: openmanifest.yaml
       target: production
       state_key: production
       environment: production
 ```
 
-Use a release tag or full commit SHA instead of `main` once Stackport publishes
+Use a release tag or full commit SHA instead of `main` once OpenManifest publishes
 versioned releases. A called workflow cannot increase its token permissions, so
 the calling job must grant `contents: write` for the state branch. The plan job
 downgrades its own token to `contents: read`.
@@ -58,7 +58,7 @@ In the application repository, open **Settings > Environments** and create the
 1. Add required reviewers and enable **Prevent self-review** where your GitHub
    plan supports those controls.
 2. Restrict deployment branches to the default branch.
-3. Add an environment secret named `STACKPORT_SECRETS_JSON`.
+3. Add an environment secret named `OPENMANIFEST_SECRETS_JSON`.
 
 The secret is one JSON object whose keys become environment variables only in
 the apply job:
@@ -74,7 +74,7 @@ the apply job:
 }
 ```
 
-Include only values needed by that stack. Environment secrets are released to
+Include only values needed by that application manifest. Environment secrets are released to
 the job after environment protection rules pass. If an environment secret and
 a caller-passed repository secret have the same name, GitHub uses the
 environment secret.
@@ -83,7 +83,7 @@ As a fallback, a repository or organization secret can be passed explicitly:
 
 ```yaml
     secrets:
-      STACKPORT_SECRETS_JSON: ${{ secrets.STACKPORT_SECRETS_JSON }}
+      OPENMANIFEST_SECRETS_JSON: ${{ secrets.OPENMANIFEST_SECRETS_JSON }}
 ```
 
 Environment storage is preferred because it places provider credentials behind
@@ -92,13 +92,13 @@ artifact, or workflow source.
 
 ## What Happens
 
-On a pull request, Stackport loads prior state, validates the YAML, computes the
+On a pull request, OpenManifest loads prior state, validates the YAML, computes the
 resource plan, compiles exact provider requests, and rejects a plan with manual,
 unsupported, or unresolved operations. The workflow summary shows action counts
 and warnings, and a 14-day artifact contains the validation and both plans.
 
 After merge, the push workflow repeats validation against the merged commit and
-current state. It then runs `stack apply --auto-approve`. This flag is safe only
+current state. It then runs `openmanifest apply --auto-approve`. This flag is safe only
 because the merge review and protected environment are the approval boundary.
 The apply report and generated state snapshot are retained for 30 days.
 
@@ -109,9 +109,9 @@ still fails and must be investigated before retrying.
 
 ## State Branch
 
-The first apply creates an orphan `stackport-state` branch containing
+The first apply creates an orphan `openmanifest-state` branch containing
 `states/production.json`. Use a unique `state_key` for each independently
-managed stack, such as `staging` and `production`.
+managed application manifest, such as `staging` and `production`.
 
 State contains provider IDs, desired fingerprints, last-applied resource
 snapshots, and secret references. It is not encrypted and must never contain
@@ -140,7 +140,7 @@ If a run fails:
 If provider operations succeeded but publishing the state branch failed, do not
 immediately rerun apply against old state. Download `state.json` from the apply
 artifact, compare it with the provider results, and publish that generated file
-with `stackport-state.sh write` after fixing branch access. This is recovery of
+with `openmanifest-state.sh write` after fixing branch access. This is recovery of
 engine-produced state, not a hand edit.
 
 Live provider mutations can cost money or delete resources. Start with a

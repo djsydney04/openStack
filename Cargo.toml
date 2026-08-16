@@ -1,8 +1,8 @@
 [workspace]
 members = [
-  "crates/stackport-core",
-  "crates/stackport-cli",
-  "crates/stackport-sdk",
+  "crates/openmanifest-core",
+  "crates/openmanifest-cli",
+  "crates/openmanifest-sdk",
 ]
 resolver = "2"
 
